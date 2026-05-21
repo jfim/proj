@@ -35,6 +35,8 @@ def _ref(name: str) -> str:
 class Engine:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.unknown_handling: str = "include"
+        self.unknown_count: int = 0
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         return self.conn.execute(sql, params)
@@ -82,9 +84,14 @@ def build_engine(
     for project in projects:
         tag_values = [1 if t in project.tags else 0 for t in tag_set]
         last_mod = _eager_last_modified(project.path)
-        cols = ["name", "path", "last_modified"] + [_ref(t) for t in tag_set]
+        cols = ["name", "path", "last_modified", "unknown"] + [_ref(t) for t in tag_set]
         placeholders = ",".join(["?"] * len(cols))
-        params = [project.name, str(project.path), last_mod] + tag_values
+        params = [
+            project.name,
+            str(project.path),
+            last_mod,
+            1 if project.unknown else 0,
+        ] + tag_values
         conn.execute(
             f"INSERT INTO projects ({','.join(cols)}) VALUES ({placeholders})",
             params,
@@ -171,11 +178,18 @@ def build_query(
 
 def build_from_manifest_path(manifest_path: _Path, cache_path: _Path) -> Engine:
     manifest = load_manifest(manifest_path)
-    projects = ProjectRegistry.from_manifest(manifest)
+    unknown_handling = str(manifest.settings.get("unknown_handling", "include")).lower()
+    if unknown_handling not in {"include", "warn", "ignore"}:
+        unknown_handling = "include"
+    include_unknown = unknown_handling != "ignore"
+    projects = ProjectRegistry.from_manifest(manifest, include_unknown=include_unknown)
     columns = ColumnRegistry()
     register_cheap_builtins(columns)
     register_expensive_builtins(columns)
     register_user_columns(columns, manifest.columns)
     cache = _Cache(cache_path)
     dispatcher = Dispatcher(columns, projects, cache)
-    return build_engine(projects, columns, dispatcher)
+    engine = build_engine(projects, columns, dispatcher)
+    engine.unknown_handling = unknown_handling
+    engine.unknown_count = projects.unknown_count
+    return engine

@@ -1,0 +1,61 @@
+# Bundled defaults for proj. Merged before the user's manifest;
+# any command redefined in ~/.config/proj/projects.yaml wins entry-by-entry.
+# See: `proj defaults --path` to find this file on disk.
+
+commands:
+  ls:
+    type: query
+    columns: [name, last_modified]
+    order_by: name
+
+  status:
+    type: query
+    columns: [name, branch, dirty, ahead, behind, last_commit]
+    where: git
+
+  clean:
+    type: run
+    where: clean_target is not null
+    cmd: "cd {{path}} && {{clean_target}}"
+
+  archive:
+    type: run
+    cmd:
+      - cd {{path}} && [ -n "{{clean_target}}" ] && {{clean_target}} || true
+      - tar -C {{workspace_root}} -caf {{archive_dir}}/{{name}}.tar.zst {{name}}
+      - rm -rf {{path}}
+      - proj forget {{name}}
+
+  audit:
+    type: query
+    columns: [name, path]
+    grouped_columns:
+      audit:
+        mode: applicable
+        columns: [has_readme, has_license]
+        on_pass: hide
+        on_fail: mark-bad
+        on_error: mark-warn
+        on_na: hide
+
+  checks:
+    type: query
+    columns: [name]
+    grouped_columns:
+      checks:
+        mode: all
+        columns: [has_readme, has_license]
+        on_pass: mark-good
+        on_fail: mark-bad
+        on_error: mark-warn
+        on_na: mark-ignored
+
+# Marks: visual styles for grouped-column cell lines.
+# The four below match the in-code defaults; redefining one in your manifest
+# performs whole-record replacement (no field merging). Create new marks freely
+# and reference them by name from any on_pass / on_fail / on_error / on_na.
+marks:
+  mark-good: { prefix: "✓ ", suffix: "",           color: green  }
+  mark-bad:  { prefix: "✗ ", suffix: "",           color: red    }
+  mark-warn: { prefix: "⚠ ", suffix: "",           color: yellow }
+  mark-ignored: { prefix: "", suffix: " (ignored)", color: grey50 }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,9 @@ class Manifest:
     projects: dict[str, ProjectEntry]
     columns: dict[str, ColumnEntry]
     settings: dict[str, Any]
+    raw_commands: dict[str, Any] = field(default_factory=dict)
+    raw_marks: dict[str, Any] = field(default_factory=dict)
+    raw_templates: dict[str, Any] = field(default_factory=dict)
 
 
 def normalize_identifier(s: str) -> str:
@@ -108,9 +111,25 @@ def load_manifest(path: Path) -> Manifest:
         columns[cname] = _parse_column(cname, craw)
 
     settings = dict(data.get("settings") or {})
+
+    raw_commands = data.get("commands") or {}
+    if not isinstance(raw_commands, dict):
+        raise ManifestError("'commands' must be a mapping")
+
+    raw_marks = data.get("marks") or {}
+    if not isinstance(raw_marks, dict):
+        raise ManifestError("'marks' must be a mapping")
+
+    raw_templates = data.get("templates") or {}
+    if not isinstance(raw_templates, dict):
+        raise ManifestError("'templates' must be a mapping")
+
     return Manifest(
         workspace_root=workspace_root,
         projects=projects,
         columns=columns,
         settings=settings,
+        raw_commands=raw_commands,
+        raw_marks=raw_marks,
+        raw_templates=raw_templates,
     )

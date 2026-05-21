@@ -6,6 +6,61 @@ This document tracks what's been shipped, what's deferred, and how the remaining
 
 ---
 
+## What's shipped (v1.5)
+
+Plan F — polish:
+
+- Column-value interpolation in `run`-type `cmd` (any `{{column}}` reference auto-queries the projects table per-row; unblocks the bundled `clean`/`archive` commands)
+- Per-project variable interpolation in `cmd` (`{{host}}`, etc.)
+- `proj run --parallel` (thread-pool concurrency, bounded to 8)
+- `proj run --summary` pass/fail table at end
+- Auto-scoping: invoked inside a workspace project, `proj run` defaults to that project; `--all` forces workspace, `--here` is explicit single-project
+- `~/.projrc` user-wide overlay merged between defaults.yaml and the workspace manifest
+
+## What's shipped (v1.4)
+
+Plan E — templates and `proj new`:
+
+- `templates:` section in manifest with `tags:` and `cmds:` (sequential shell strings)
+- `{{name}}`, `{{workspace_root}}`, `{{date}}` interpolation in template cmds
+- `proj new <template> <name>` runs cmds from `workspace.root`, halts on first failure (partial state preserved), auto-adopts on success
+- `--dry-run` flag
+
+## What's shipped (v1.3)
+
+Plan D — unknown subdirectories and `proj adopt`:
+
+- Workspace auto-scan at engine build: any subdirectory not declared in `projects:` appears as a row with `unknown = 1`
+- `settings.unknown_handling`: `include` (default) / `warn` (stderr footer counting unknowns) / `ignore` (excluded entirely)
+- `proj adopt [SUBDIR] [--tags T,U,V]` interactive promotion; `--list` prints unknowns without prompting; no-arg form picks from a numbered list
+- Manifest mutations (`adopt`, `forget`) migrated to ruamel.yaml — comments and ordering preserved on round-trip
+- `Manifest.raw_marks` carried through; `Project.unknown` field on the registry
+
+## What's shipped (v1.2)
+
+Delivered by [`plans/2026-05-21-proj-v3-grouped-columns.md`](plans/2026-05-21-proj-v3-grouped-columns.md):
+
+- `grouped_columns:` schema on `query`-type commands with `mode: applicable|all`, `columns:`, `on_pass`/`on_fail`/`on_error`/`on_na`
+- Comparison-expression inputs (`a = b`, `a != b`, `a <= b`, ...) with auto-`_applies` from both sides
+- Marks system: `marks:` top-level block with `prefix`/`suffix`/`color`; four bundled marks; whole-record override
+- Bundled `audit` (passes hidden) and `checks` (all states shown) commands
+- Rich-rendered multi-line cells with color; plain and json formats also supported
+- `Manifest.raw_marks` field
+
+## What's shipped (v1.1)
+
+Delivered by [`plans/2026-05-21-proj-v2-commands-as-config.md`](plans/2026-05-21-proj-v2-commands-as-config.md):
+
+- `proj init [DIRECTORY]` — bootstrap a manifest from a directory of subdirectories
+- Bundled `defaults.yaml` shipped inside the package (`ls`, `status`, `clean`, `archive`)
+- `proj defaults` / `proj defaults --path` for discoverability
+- `proj run <cmd>` primitive with `--where`, `--dry-run`, `{{name}}`/`{{path}}`/`{{workspace_root}}`/`{{archive_dir}}` interpolation, exit-code = failure count
+- `proj forget <name>` primitive (manifest edit; plain pyyaml — comment preservation deferred to Plan D when adopt lands)
+- `proj adopt` / `proj new` stubs (error with "not yet implemented")
+- User-overridable commands in a `commands:` block: `type: query` or `type: run`, `cmd:` as string or list (sequential, fail-on-first-error), CLI `--where` AND-merges with command's `where:`
+- Dynamic CLI dispatch: unknown subcommand names resolve against merged defaults+user commands
+- `Manifest.raw_commands` field exposed alongside existing `projects`/`columns`/`settings`
+
 ## What's shipped (v1.0)
 
 Delivered by [`plans/2026-05-21-proj-v1-query-engine.md`](plans/2026-05-21-proj-v1-query-engine.md):
@@ -28,105 +83,21 @@ The user can install, drop a manifest, and run real SQL against their workspace 
 
 ## What's left
 
-Five proposed follow-up plans, in suggested implementation order. Each plan corresponds to one or more sections of the design spec.
+All five follow-up plans (B–F) shipped. Remaining design-spec scope cuts (intentionally deferred from v1):
 
-### Plan B — Commands as config
-
-**Spec sections:** "Commands" (the user-overridable side), "Bundled default commands", "`query`-type command schema", "`run`-type command schema", "Marks" (foundational subset).
-
-**Goal:** Lift the hardcoded `proj query` and add five hardcoded primitives + the user-configurable command layer that's the heart of the design.
-
-**Scope:**
-- Five hardcoded primitives:
-  - `proj query` (already done — keep)
-  - `proj run <cmd>` — exec shell per matching project, `cwd=path`, exit code = number of failures
-  - `proj adopt [<subdir>]` — interactive promotion of an unknown subdirectory (depends on Plan D below; can ship as a no-op stub if Plan D not yet built)
-  - `proj forget <name>` — remove project entry from manifest
-  - `proj new <template> <name>` — defer until Plan E
-- User-overridable commands defined in `commands:` section of manifest, with two types: `query` and `run`
-- `cmd:` accepts string or list (sequential, fail-on-first-error)
-- Variable interpolation in `run`-type `cmd` (`{{path}}`, `{{name}}`, any column value, project vars)
-- `--dry-run` flag on `run`-type
-- Command resolution: hardcoded primitive wins, else look up `commands.<name>` in merged config
-- Ship `proj/defaults.yaml` inside the package with `ls`, `status`, `clean`, `archive` as `query`/`run` commands using existing built-in columns
-- `proj defaults` command prints contents; `proj defaults --path` prints absolute path
-- Config merge order: defaults.yaml → `~/.projrc` → workspace manifest → CLI flags
-
-**Deliverable:** `proj ls`, `proj status`, `proj clean`, `proj archive` all work out of the box; users can override or add their own (`proj fmt`, `proj pull`).
-
-**Out of scope (still deferred):** grouped columns, marks beyond what's needed for the bundled defaults (which don't yet use grouped columns), `proj adopt`/`proj new`.
-
-### Plan C — Grouped columns and marks
-
-**Spec sections:** "Grouped columns", "Marks", "comparison expressions" subsection.
-
-**Goal:** Make `proj audit` shine with multi-line cells and configurable status symbols.
-
-**Scope:**
-- `grouped_columns:` schema on `query`-type commands with `mode: applicable|all`, `columns:`, `on_pass`, `on_fail`, `on_error`, `on_na`
-- Auto-projection of input columns and their `_applies` partners into the SELECT
-- Python-side formatter that walks rows and emits multi-line cells
-- Marks system: `marks:` top-level config with `prefix`, `suffix`, `color`; four bundled defaults (`mark-good`, `mark-bad`, `mark-warn`, `mark-ignored`); whole-record replacement on override
-- Rich-based rendering of multi-line cells with color
-- Comparison expressions as `grouped_columns.columns:` entries: `a = b`, `a != b`, `a > b`, `a < b`, `a <= b`, `a >= b`. Parser is a single regex; anything not matching is a bare column reference.
-- Bundled `audit` and `checks` commands in `defaults.yaml`
-
-**Deliverable:** `proj audit` shows the dashboard from the spec; users can define their own grouped commands.
-
-### Plan D — Unknown subdirectories and `proj adopt`
-
-**Spec sections:** "Unknown subdirectories", "`proj adopt`".
-
-**Goal:** Make undeclared workspace subdirectories first-class citizens.
-
-**Scope:**
-- Workspace scan at engine-build time: directories under `workspace.root` not listed in `projects:` get auto-inserted with `unknown = 1`
-- `settings.unknown_handling`: `include` (default) / `warn` / `ignore`
-- `warn` mode emits a stderr footer counting unknowns
-- `ignore` mode excludes unknowns from the projects table entirely
-- `proj adopt <subdir>` (interactive): prompts for tags, writes a new entry to the manifest (preserving comments and ordering — use `ruamel.yaml` rather than `pyyaml` for this command only)
-- `proj adopt` with no arg: lists unknowns, lets user pick
-
-**Deliverable:** users can run `proj adopt foo`, type a few tags, and the project is in the manifest. Unknowns show up in `proj ls` with a flag.
-
-### Plan E — Templates and `proj new`
-
-**Spec sections:** "Templates", "`proj new`".
-
-**Goal:** Spin up new projects with one command.
-
-**Scope:**
-- `templates:` section in manifest with `tags:` and `cmds:` (list of shell strings)
-- Variable interpolation: `{{name}}`, `{{workspace_root}}`, `{{date}}`
-- `proj new <template> <name>` runs each `cmd` from `workspace.root`, then auto-adopts the new project with the template's tags
-- On any step's failure: stop, report which step, leave the partial state in place (user resolves manually)
-
-**Deliverable:** `proj new python-uv my-experiment` creates the directory, runs the template's commands (which can include `claude "scaffold a Python project ..."` per user taste), and adds the entry.
-
-### Plan F — Polish
-
-**Spec sections:** "Invocation context", "parallel" in run schema, settings, "`run` primitive" flag set.
-
-**Goal:** Make `proj` feel like a finished tool.
-
-**Scope:**
-- Auto-scoping based on cwd: `run`-type commands invoked inside a project auto-scope to it; `query`-type aggregate by default. `--all` / `--here` overrides. Per-command `scope:` config.
-- `proj run --parallel` (and `parallel: true` on user commands): concurrent execution with per-key cache locking
-- `proj run --summary`: pass/fail table instead of full per-project output
-- `proj run --only-matches`, `--only-failures` filters
-- `progress` indicator when >5 uncached expensive columns are about to be evaluated in one query
-- Color theme via `settings.color: auto|always|never`
-- `proj run` exit code = number of project failures (already in spec; verify it's wired)
-
-**Deliverable:** the tool feels production-grade. Nothing surprising, predictable failure modes.
+- AI-driven `proj new` (users can already invoke `claude` from a template's `cmds`)
+- Plugin/extension system for built-in columns
+- Per-key file locks for concurrent cache writes (single-process for now; parallel mode shares an in-memory engine within one process)
+- `--only-matches`, `--only-failures` filters on `proj run`
+- Progress indicator when >5 uncached expensive columns are about to be evaluated
+- Explicit `settings.color: auto|always|never` (rich auto-detects today)
+- `proj config dump` to show effective merged config
+- `proj archive --restore`
 
 ---
 
-## Suggested ordering rationale
+## Plans (all shipped)
 
-- **Plan B first** because the design's central insight (commands-as-config) only delivers value once users can run `proj ls`, `proj status`, etc. without writing SQL.
-- **Plan C** next because audit was specifically called out as a needed feature during brainstorming. It's also a natural showcase for the column model.
-- **Plan D and E** are independent of each other; D depends on Plan B's `forget` primitive working but otherwise stands alone. E is a self-contained vertical slice.
-- **Plan F** last because it's polish on a working tool; before then, the design's load-bearing pieces aren't all in place to even know what needs polish.
-
-Each plan can be brainstormed independently for any open design questions (e.g., the exact semantics of `--here` when invoked inside a nested git submodule) using [`superpowers:brainstorming`](https://github.com/anthropics/claude-skills/tree/main/superpowers), then expanded into an implementation plan via [`superpowers:writing-plans`](https://github.com/anthropics/claude-skills/tree/main/superpowers).
+- [Plan B — Commands as config](plans/2026-05-21-proj-v2-commands-as-config.md)
+- [Plan C — Grouped columns and marks](plans/2026-05-21-proj-v3-grouped-columns.md)
+- Plans D/E/F (no separate plan docs; implemented incrementally from the design spec)

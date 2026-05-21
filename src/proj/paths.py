@@ -18,6 +18,12 @@ def cache_dir() -> Path:
     return base / "proj"
 
 
+def projrc_path() -> Path | None:
+    """Return ~/.projrc if it exists, else None."""
+    p = Path.home() / ".projrc"
+    return p if p.exists() else None
+
+
 def resolve_project_path(name: str, declared: str | None, workspace_root: Path) -> Path:
     """Resolve a project's directory.
 
