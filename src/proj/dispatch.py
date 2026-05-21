@@ -24,10 +24,10 @@ class Dispatcher:
 
     def _project_vars(self, p: Project) -> dict[str, str]:
         return {
-            **p.vars,
             "name": p.name,
             "path": str(p.path),
             "workspace_root": str(self.projects.workspace_root),
+            **p.vars,
         }
 
     def get_applies(self, project_name: str, column_name: str) -> int:

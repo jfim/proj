@@ -128,3 +128,24 @@ def test_type_coercion_applied(projects, cache):
     ))
     d = Dispatcher(reg, projects, cache)
     assert d.get_value("foo", "n") == 42
+
+
+def test_project_var_shadows_auto_injected(tmp_path, cache):
+    """A project-declared var (e.g. host) with the same name as an auto-injected
+    var (e.g. path) overrides the auto-injected one."""
+    proj_dir = tmp_path / "real-path"
+    proj_dir.mkdir()
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir()
+    p = Project(name="foo", path=proj_dir, tags=[], vars={"path": str(custom_dir)})
+    projects = ProjectRegistry({p.name: p}, tmp_path)
+    reg = ColumnRegistry()
+    reg.register(ColumnSpec(
+        name="echo_path", type="text",
+        applies_to=None, applies_when=None, cache=False,
+        value_from_template="echo {{path}}",
+        evaluator=make_shell_evaluator(),
+    ))
+    d = Dispatcher(reg, projects, cache)
+    # Project's own `path` var should win over the auto-injected one
+    assert d.get_value("foo", "echo_path") == str(custom_dir)
