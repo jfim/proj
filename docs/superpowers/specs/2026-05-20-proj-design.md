@@ -365,11 +365,42 @@ Manifest schema:
 grouped_columns:
   <output_column_name>:
     mode: applicable | all
-    columns: [<col>, ...]              # input boolean columns
+    columns: [<col-or-expr>, ...]      # input boolean columns OR simple comparison expressions
     on_pass:  hide | <mark-name>       # value=1 and applies=1     (default: mark-good)
     on_fail:  hide | <mark-name>       # value=0 and applies=1     (default: mark-bad)
     on_error: hide | <mark-name>       # value=NULL and applies=1  (default: mark-warn)
     on_na:    hide | <mark-name>       # applies=0                 (default: mark-ignored)
+```
+
+**Comparison expressions as input "columns":** an entry in `columns:` may be a simple binary comparison `<a> <op> <b>` where `<a>` and `<b>` are bare column names (identifiers may contain hyphens) and `<op>` is one of `=`, `!=`, `<`, `>`, `<=`, `>=`. The expression is treated as a derived boolean column whose:
+
+- value is `(a OP b)` when both sides apply, else NULL
+- `_applies` is `a_applies AND b_applies`
+- cell label (in the rendered multi-line cell) is the verbatim expression string
+
+Parser: a single regex `^\s*([\w-]+)\s*(=|!=|<=|>=|<|>)\s*([\w-]+)\s*$` applied to each entry; anything not matching is a bare column reference. `IS NULL`/`IS NOT NULL` are intentionally out of scope for v1 due to subtle applies-vs-null semantics — write a regular column if you need them.
+
+Example:
+```yaml
+commands:
+  deploy_ok:
+    type: query
+    columns: [name, host, deployed_version]
+    grouped_columns:
+      deploy_status:
+        mode: all
+        columns: [is_running, deployed_version=source_version]
+        on_pass: hide
+        on_fail: mark-bad
+        on_error: mark-warn
+        on_na: mark-ignored
+```
+Output (server-1 has the wrong version deployed):
+```
+NAME              HOST              DEPLOYED_VERSION   DEPLOY_STATUS
+my-app-server-1   server-1.tld      1.4.2              1/2
+                                                       ✗ deployed_version=source_version
+my-app-server-2   server-2.tld      1.5.0              2/2
 ```
 
 **Count semantics:**
