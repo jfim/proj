@@ -6,9 +6,10 @@ import re as _re
 import sqlite3
 from pathlib import Path as _Path
 
-from proj.builtins import register_cheap_builtins, register_expensive_builtins
+from proj.builtins import register_builtins
 from proj.cache import Cache as _Cache
 from proj.columns import ColumnRegistry, ColumnSpec, register_user_columns
+from proj.defaults_loader import load_default_columns
 from proj.dispatch import Dispatcher
 from proj.manifest import load_manifest
 from proj.projects import ProjectRegistry
@@ -184,8 +185,8 @@ def build_from_manifest_path(manifest_path: _Path, cache_path: _Path) -> Engine:
     include_unknown = unknown_handling != "ignore"
     projects = ProjectRegistry.from_manifest(manifest, include_unknown=include_unknown)
     columns = ColumnRegistry()
-    register_cheap_builtins(columns)
-    register_expensive_builtins(columns)
+    register_builtins(columns)
+    register_user_columns(columns, load_default_columns())
     register_user_columns(columns, manifest.columns)
     cache = _Cache(cache_path)
     dispatcher = Dispatcher(columns, projects, cache)

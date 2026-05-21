@@ -62,6 +62,13 @@ def _parse_project(name: str, raw: dict[str, Any]) -> ProjectEntry:
     return ProjectEntry(name=name, tags=tags, path_override=path_override, vars=vars_)
 
 
+def parse_columns(raw: dict[str, Any]) -> dict[str, ColumnEntry]:
+    """Parse a `columns:` mapping (from defaults.yaml or a manifest) into ColumnEntry objects."""
+    if not isinstance(raw, dict):
+        raise ManifestError("'columns' must be a mapping")
+    return {name: _parse_column(name, craw) for name, craw in raw.items()}
+
+
 def _parse_column(name: str, raw: dict[str, Any]) -> ColumnEntry:
     if name.endswith("_applies"):
         raise ReservedNameError(f"column {name!r}: names ending in _applies are reserved")
@@ -103,12 +110,7 @@ def load_manifest(path: Path) -> Manifest:
     for pname, praw in raw_projects.items():
         projects[pname] = _parse_project(pname, praw)
 
-    raw_columns = data.get("columns") or {}
-    if not isinstance(raw_columns, dict):
-        raise ManifestError("'columns' must be a mapping")
-    columns: dict[str, ColumnEntry] = {}
-    for cname, craw in raw_columns.items():
-        columns[cname] = _parse_column(cname, craw)
+    columns = parse_columns(data.get("columns") or {})
 
     settings = dict(data.get("settings") or {})
 
