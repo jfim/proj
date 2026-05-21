@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re as _re
 import sqlite3
 
 from proj.columns import ColumnRegistry, ColumnSpec
@@ -130,3 +131,29 @@ def _virtual_col_defs(spec: ColumnSpec) -> list[str]:
             f") VIRTUAL"
         )
     return [applies_def, value_def]
+
+
+_SELECT_RE = _re.compile(r"^\s*select\s+", _re.IGNORECASE)
+
+
+def build_query(
+    input: str,
+    where: str | None = None,
+    group_by: str | None = None,
+    order_by: str | None = None,
+    limit: int | None = None,
+) -> str:
+    if _SELECT_RE.match(input):
+        if where or group_by or order_by or limit:
+            raise ValueError("full SELECT statement cannot be combined with --where/--order-by/--limit/--group-by")
+        return input
+    parts = [f"SELECT {input} FROM projects"]
+    if where:
+        parts.append(f"WHERE {where}")
+    if group_by:
+        parts.append(f"GROUP BY {group_by}")
+    if order_by:
+        parts.append(f"ORDER BY {order_by}")
+    if limit is not None:
+        parts.append(f"LIMIT {limit}")
+    return " ".join(parts)

@@ -6,7 +6,7 @@ from proj.builtins import register_cheap_builtins
 from proj.cache import Cache
 from proj.columns import ColumnRegistry
 from proj.dispatch import Dispatcher
-from proj.engine import build_engine
+from proj.engine import build_engine, build_query
 from proj.projects import Project, ProjectRegistry
 
 
@@ -82,3 +82,39 @@ def test_filter_by_tag(engine):
     assert row[0] == 2
     row = engine.execute("SELECT count(*) FROM projects WHERE library").fetchone()
     assert row[0] == 1
+
+
+def test_build_query_bare_cols():
+    assert build_query("name, size") == "SELECT name, size FROM projects"
+
+
+def test_build_query_with_where():
+    assert build_query("name", where="mine") == "SELECT name FROM projects WHERE mine"
+
+
+def test_build_query_with_order():
+    assert build_query("name", order_by="size") == "SELECT name FROM projects ORDER BY size"
+
+
+def test_build_query_with_limit():
+    assert build_query("name", limit=5) == "SELECT name FROM projects LIMIT 5"
+
+
+def test_build_query_with_group_by():
+    assert build_query("lang, count(*)", group_by="lang") == \
+        "SELECT lang, count(*) FROM projects GROUP BY lang"
+
+
+def test_build_query_all_clauses():
+    sql = build_query("name, size", where="mine", group_by=None, order_by="size desc", limit=10)
+    assert sql == "SELECT name, size FROM projects WHERE mine ORDER BY size desc LIMIT 10"
+
+
+def test_build_query_full_select_passes_through():
+    sql = build_query("select name from projects where mine")
+    assert sql == "select name from projects where mine"
+
+
+def test_build_query_full_select_with_extra_clauses_raises():
+    with pytest.raises(ValueError, match="full SELECT"):
+        build_query("select name from projects", where="mine")
