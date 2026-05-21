@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,3 +83,19 @@ def coerce_to_type(raw: Any, ctype: str) -> Any:
             return None
         return None
     return None
+
+
+def make_shell_evaluator(timeout: float = 30.0) -> Evaluator:
+    """Build a shell-based evaluator. The 'rendered' arg is the post-interpolation command."""
+    def evaluator(rendered: str, cwd: Path) -> Any:
+        try:
+            result = subprocess.run(
+                ["sh", "-c", rendered],
+                cwd=cwd, capture_output=True, text=True, timeout=timeout,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+    return evaluator
