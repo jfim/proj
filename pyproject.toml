@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 proj = "proj.cli:main"
+proj-col = "proj.column_helpers:main"
 
 [project.urls]
 Homepage = "https://github.com/jfim/proj"

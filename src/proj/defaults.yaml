@@ -1,6 +1,43 @@
 # Bundled defaults for proj. Merged before the user's manifest;
-# any command redefined in ~/.config/proj/projects.yaml wins entry-by-entry.
+# any column or command redefined in ~/.config/proj/projects.yaml wins entry-by-entry.
 # See: `proj defaults --path` to find this file on disk.
+#
+# Note: `last_modified` is also a built-in column, materialized eagerly in
+# Python (see proj/builtins.py) — it's deliberately not listed here.
+
+columns:
+  # File-presence columns. Used by the audit/checks commands.
+  has_makefile: { type: boolean, value-from: "[ -e Makefile ] && echo true || echo false" }
+  has_justfile: { type: boolean, value-from: "[ -e justfile ] && echo true || echo false" }
+  has_readme:   { type: boolean, value-from: "[ -e README.md ] && echo true || echo false" }
+  has_license:  { type: boolean, value-from: "[ -e LICENSE ] && echo true || echo false" }
+
+  # Git presence. Used as the `applies-to` gate for the git-aware columns below.
+  git: { type: boolean, value-from: "[ -e .git ] && echo true || echo false" }
+
+  # Language detection by marker file(s). Each is true iff any marker exists.
+  lang_rust:   { type: boolean, value-from: "[ -e Cargo.toml ] && echo true || echo false" }
+  lang_python: { type: boolean, value-from: "if [ -e pyproject.toml ] || [ -e setup.py ] || [ -e requirements.txt ]; then echo true; else echo false; fi" }
+  lang_elixir: { type: boolean, value-from: "[ -e mix.exs ] && echo true || echo false" }
+  lang_scala:  { type: boolean, value-from: "[ -e build.sbt ] && echo true || echo false" }
+  lang_r:      { type: boolean, value-from: "[ -e DESCRIPTION ] && echo true || echo false" }
+  lang_js:     { type: boolean, value-from: "[ -e package.json ] && echo true || echo false" }
+  lang_ts:     { type: boolean, value-from: "[ -e tsconfig.json ] && echo true || echo false" }
+  lang_go:     { type: boolean, value-from: "[ -e go.mod ] && echo true || echo false" }
+  lang_java:   { type: boolean, value-from: "if [ -e pom.xml ] || [ -e build.gradle ]; then echo true; else echo false; fi" }
+  lang_kotlin: { type: boolean, value-from: "[ -e build.gradle.kts ] && echo true || echo false" }
+
+  # Git-aware columns. Gated by `applies-to: git` so they don't run on non-git projects.
+  dirty:       { type: boolean, applies-to: git, value-from: "[ -z \"$(git status --porcelain 2>/dev/null)\" ] && echo false || echo true" }
+  branch:      { type: text,    applies-to: git, value-from: "git rev-parse --abbrev-ref HEAD" }
+  ahead:       { type: integer, applies-to: git, value-from: "git rev-list --count @{u}..HEAD 2>/dev/null || echo 0" }
+  behind:      { type: integer, applies-to: git, value-from: "git rev-list --count HEAD..@{u} 2>/dev/null || echo 0" }
+  last_commit: { type: integer, applies-to: git, cache: true, value-from: "git log -1 --format=%ct" }
+
+  # Awkward in shell — branchy logic or portability footguns. Backed by proj-col,
+  # which is a console script shipped with proj (see proj/column_helpers.py).
+  size:         { type: integer, cache: true, value-from: "proj-col size" }
+  clean_target: { type: text,    cache: true, value-from: "proj-col clean_target" }
 
 commands:
   ls:

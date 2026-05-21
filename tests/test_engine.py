@@ -3,12 +3,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-from proj.builtins import register_cheap_builtins
+from proj.builtins import register_builtins
 from proj.cache import Cache
-from proj.columns import ColumnRegistry
+from proj.columns import ColumnRegistry, register_user_columns
+from proj.defaults_loader import load_default_columns
 from proj.dispatch import Dispatcher
 from proj.engine import build_engine, build_from_manifest_path, build_query
 from proj.projects import Project, ProjectRegistry
+
+
+def _register_all(reg: ColumnRegistry) -> None:
+    """Register the Python built-in plus all default shell columns from defaults.yaml."""
+    register_builtins(reg)
+    register_user_columns(reg, load_default_columns())
 
 
 @pytest.fixture
@@ -34,7 +41,7 @@ def projects(workspace) -> ProjectRegistry:
 @pytest.fixture
 def columns() -> ColumnRegistry:
     reg = ColumnRegistry()
-    register_cheap_builtins(reg)
+    _register_all(reg)
     return reg
 
 
@@ -144,6 +151,32 @@ def test_build_from_manifest_end_to_end(tmp_path):
     assert rows == [("foo", 1, 1)]
 
 
+def test_default_git_columns_via_shell(tmp_path):
+    """End-to-end check that the git columns now living in defaults.yaml work."""
+    import subprocess as _sp
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    p = workspace / "g"
+    p.mkdir()
+    _sp.run(["git", "init", "-q"], cwd=p, check=True)
+    _sp.run(["git", "config", "user.email", "t@t"], cwd=p, check=True)
+    _sp.run(["git", "config", "user.name", "T"], cwd=p, check=True)
+    _sp.run(["git", "config", "commit.gpgsign", "false"], cwd=p, check=True)
+    (p / "f").write_text("x")
+    _sp.run(["git", "add", "."], cwd=p, check=True)
+    _sp.run(["git", "commit", "-qm", "init"], cwd=p, check=True)
+    _sp.run(["git", "checkout", "-q", "-b", "feature"], cwd=p, check=True)
+
+    manifest_path = tmp_path / "projects.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump({"workspace": {"root": str(workspace)}, "projects": {"g": {}}})
+    )
+    engine = build_from_manifest_path(manifest_path, cache_path=tmp_path / "cache.db")
+    rows = engine.execute("SELECT name, git, branch, dirty FROM projects").fetchall()
+    assert rows == [("g", 1, "feature", 0)]
+
+
 def test_tag_and_builtin_column_name_collision(tmp_path):
     """A project tagged 'lang_rust' should not crash the engine even though
     lang_rust is also a built-in column. The tag takes precedence."""
@@ -152,7 +185,6 @@ def test_tag_and_builtin_column_name_collision(tmp_path):
     (ws / "p").mkdir()
     # Note: no Cargo.toml — the built-in lang_rust would be 0 here. Tag says 1.
 
-    from proj.builtins import register_cheap_builtins, register_expensive_builtins
     from proj.cache import Cache
     from proj.columns import ColumnRegistry
     from proj.dispatch import Dispatcher
@@ -163,8 +195,7 @@ def test_tag_and_builtin_column_name_collision(tmp_path):
         ws,
     )
     reg = ColumnRegistry()
-    register_cheap_builtins(reg)
-    register_expensive_builtins(reg)
+    _register_all(reg)
     cache = Cache(tmp_path / "cache.db")
     dispatcher = Dispatcher(reg, projects, cache)
     engine = build_engine(projects, reg, dispatcher)  # MUST not raise
