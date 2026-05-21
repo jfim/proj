@@ -46,3 +46,39 @@ class ColumnRegistry:
 
     def __iter__(self):
         return iter(self._cols.values())
+
+
+_BOOL_TRUE = {"true", "1", "yes"}
+_BOOL_FALSE = {"false", "0", "no", ""}
+
+
+def coerce_to_type(raw: Any, ctype: str) -> Any:
+    """Coerce a raw shell-output value to the declared column type. Returns None on failure."""
+    if raw is None:
+        return None
+    s = raw.strip() if isinstance(raw, str) else raw
+
+    if ctype == "text":
+        return s if isinstance(s, str) else str(s)
+    if ctype == "integer":
+        try:
+            return int(s)
+        except (ValueError, TypeError):
+            return None
+    if ctype == "real":
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+    if ctype == "boolean":
+        if isinstance(s, bool):
+            return 1 if s else 0
+        if isinstance(s, str):
+            low = s.lower()
+            if low in _BOOL_TRUE:
+                return 1
+            if low in _BOOL_FALSE:
+                return 0
+            return None
+        return None
+    return None

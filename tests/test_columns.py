@@ -1,6 +1,6 @@
 import pytest
 
-from proj.columns import ColumnRegistry, ColumnSpec
+from proj.columns import ColumnRegistry, ColumnSpec, coerce_to_type
 from proj.errors import UnknownColumnError
 
 
@@ -62,3 +62,34 @@ def test_names_returns_registered():
             cache=False, value_from_template="x", evaluator=dummy_eval,
         ))
     assert sorted(reg.names()) == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(
+    "raw,ctype,expected",
+    [
+        ("42", "integer", 42),
+        ("  17 ", "integer", 17),
+        ("3.14", "real", 3.14),
+        ("hello", "text", "hello"),
+        ("  hi ", "text", "hi"),
+        ("true", "boolean", 1),
+        ("True", "boolean", 1),
+        ("yes", "boolean", 1),
+        ("1", "boolean", 1),
+        ("false", "boolean", 0),
+        ("0", "boolean", 0),
+        ("no", "boolean", 0),
+        ("", "boolean", 0),
+        ("nonsense", "boolean", None),
+        ("notanint", "integer", None),
+        ("notafloat", "real", None),
+    ],
+)
+def test_coerce_to_type(raw, ctype, expected):
+    assert coerce_to_type(raw, ctype) == expected
+
+
+def test_coerce_none_input_returns_none():
+    assert coerce_to_type(None, "text") is None
+    assert coerce_to_type(None, "integer") is None
+    assert coerce_to_type(None, "boolean") is None
