@@ -15,7 +15,7 @@ from proj.commands import (
     parse_commands,
 )
 from proj.defaults_loader import defaults_path, load_defaults
-from proj.engine import _ref, build_from_manifest_path, build_query
+from proj.engine import build_from_manifest_path, build_query, render_select_part
 from proj.grouped import build_grouped_selects
 from proj.init import list_subdirectories, render_manifest, write_manifest
 from proj.marks import BUNDLED_MARKS, merge_marks, parse_marks
@@ -185,7 +185,7 @@ def _make_query_click(spec: QueryCommand) -> click.Command:
             raise click.UsageError(f"Manifest not found at {manifest_path}")
         engine = build_from_manifest_path(manifest_path, cache_path=cdir / "cache.db")
         _emit_unknown_warning(engine)
-        user_select_parts = [_ref(c) for c in spec.columns]
+        user_select_parts = [render_select_part(c) for c in spec.columns]
         grouped_select_parts = build_grouped_selects(spec.grouped_columns)
         select = ", ".join(user_select_parts + grouped_select_parts)
         sql = build_query(
