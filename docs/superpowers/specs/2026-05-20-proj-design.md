@@ -122,22 +122,48 @@ CLI flags override manifest values per invocation.
 
 In-memory SQLite (`:memory:`) materialized per invocation:
 
+Each non-tag column is synthesized as **two** paired VIRTUAL generated columns: `<name>` (the value) and `<name>_applies` (a boolean: is this column applicable to this project?). The `_applies` partner is always present, even for ungated columns (where it's a constant `1`).
+
 ```sql
 CREATE TABLE projects (
     name TEXT PRIMARY KEY,
     path TEXT NOT NULL,
     last_modified INTEGER,
-    -- one INTEGER column per declared tag (boolean as 0/1)
+
+    -- tags: one INTEGER column per declared tag (boolean as 0/1)
     oss INTEGER,
     mine INTEGER,
-    -- expensive built-ins and user-defined columns as VIRTUAL generated columns
-    -- applies-to is baked into the generated expression: NULL when not applicable
-    size INTEGER GENERATED ALWAYS AS (get_column_value(path, 'size')) VIRTUAL,
+
+    -- ungated column: _applies is constant 1
+    size_applies INTEGER GENERATED ALWAYS AS (1) VIRTUAL,
+    size         INTEGER GENERATED ALWAYS AS (get_column_value(path, 'size')) VIRTUAL,
+
+    -- applies-to gate: SQL CASE referencing other columns
+    dirty_applies INTEGER GENERATED ALWAYS AS (
+        CASE WHEN git THEN get_column_applies(path, 'dirty') ELSE 0 END
+    ) VIRTUAL,
     dirty INTEGER GENERATED ALWAYS AS (
         CASE WHEN git THEN get_column_value(path, 'dirty') ELSE NULL END
     ) VIRTUAL,
+
+    has_license_applies INTEGER GENERATED ALWAYS AS (
+        CASE WHEN oss THEN get_column_applies(path, 'has_license') ELSE 0 END
+    ) VIRTUAL,
     has_license INTEGER GENERATED ALWAYS AS (
         CASE WHEN oss THEN get_column_value(path, 'has_license') ELSE NULL END
+    ) VIRTUAL,
+
+    -- applies-when gate: lives inside get_column_applies (shell-evaluated)
+    swp_in_hgignore_applies INTEGER GENERATED ALWAYS AS (
+        get_column_applies(path, 'swp_in_hgignore')
+    ) VIRTUAL,
+    swp_in_hgignore INTEGER GENERATED ALWAYS AS (
+        get_column_value(path, 'swp_in_hgignore')
+    ) VIRTUAL,
+
+    -- both gates: SQL CASE wraps get_column_applies
+    "otp-version_applies" INTEGER GENERATED ALWAYS AS (
+        CASE WHEN lang_elixir THEN get_column_applies(path, 'otp-version') ELSE 0 END
     ) VIRTUAL,
     "otp-version" TEXT GENERATED ALWAYS AS (
         CASE WHEN lang_elixir THEN get_column_value(path, 'otp-version') ELSE NULL END
@@ -145,20 +171,42 @@ CREATE TABLE projects (
 );
 ```
 
-### Single dispatch function
+Two SQLite-registered Python functions back this:
 
-One Python function is registered with SQLite via `conn.create_function`:
+- `get_column_value(path, name)` — returns the column's value, or `NULL` on error / applies-when miss
+- `get_column_applies(path, name)` — returns `1` (applicable) or `0` (not applicable) based on the column's `applies-when`. Returns `1` when no `applies-when` is declared.
+
+The SQL-level `applies-to` gate is baked into **both** the value and `_applies` expressions (it references other columns, which only SQL can see). The `applies-when` gate lives inside `get_column_applies`. `get_column_value` also internally invokes the applies-when check before running `value-from`, so a query that selects only the value column (not `_applies`) still gets correct NULLs.
+
+The `_applies` suffix is reserved; the manifest validator errors if a user-defined column name ends in `_applies`.
+
+### Dispatch functions
+
+Two Python functions are registered with SQLite via `conn.create_function`:
 
 ```python
+def get_column_applies(path: str, column_name: str) -> int:
+    """Return 1 if the column's applies-when condition is satisfied (or no applies-when), else 0."""
+    spec = column_registry[column_name]
+    if spec.applies_when is None:
+        return 1
+    cached = cache.lookup(path, f"{column_name}__applies", spec.cache_key(path))
+    if cached is not None:
+        return cached
+    applies = 1 if shell_ok(spec.applies_when, cwd=path) else 0
+    cache.store(path, f"{column_name}__applies", spec.cache_key(path), applies)
+    return applies
+
+
 def get_column_value(path: str, column_name: str) -> Any:
     """Resolve a column value for a project, with caching, applies-when gating, and type coercion."""
-    spec = column_registry[column_name]   # built-in or user-defined
+    spec = column_registry[column_name]
+    if get_column_applies(path, column_name) == 0:
+        return None                       # SQL NULL — not applicable
     if spec.cache:
         cached = cache.lookup(path, column_name, spec.cache_key(path))
         if cached is not None:
             return cached
-    if spec.applies_when and not shell_ok(spec.applies_when, cwd=path):
-        return None                       # SQL NULL — not applicable
     try:
         raw = spec.evaluate(path)         # stat, git, shell, etc.
     except Exception as e:
@@ -170,7 +218,7 @@ def get_column_value(path: str, column_name: str) -> Any:
     return value
 ```
 
-All built-in extended columns and all user-defined columns flow through this function. It's the single dispatch point where caching, applies-when gating, type coercion, and error handling live. `applies-to` gating lives in the generated-column SQL (above), not in this function — by the time `get_column_value` is invoked, the cheap SQL-level applicability check has already passed.
+All built-in extended columns and all user-defined columns flow through these functions. They are the single dispatch points where caching, applies-when gating, type coercion, and error handling live. `applies-to` gating lives in the generated-column SQL (above), not in these functions — by the time either is invoked, the cheap SQL-level applicability check has already passed.
 
 ### Applicability: two flavors
 
@@ -178,12 +226,27 @@ A column can be gated by either, both, or neither:
 
 | Flavor | Where evaluated | Cost | Use when |
 |---|---|---|---|
-| `applies-to: <sql-expr>` | SQL `CASE WHEN ... THEN ... ELSE NULL END` baked into the generated column | Cheap — references already-materialized columns | The gate is a tag or another column (`lang_elixir`, `oss`, `git`) |
-| `applies-when: <shell-cmd>` | Inside `get_column_value`, before `value-from` runs; `cwd=path` | Expensive — shell invocation per project | The gate requires touching the filesystem in a way no existing column captures (`test -f .hgignore`, `git config --get something`) |
+| `applies-to: <sql-expr>` | SQL `CASE WHEN ... THEN ... ELSE NULL END` baked into both the value and `_applies` generated columns | Cheap — references already-materialized columns | The gate is a tag or another column (`lang_elixir`, `oss`, `git`) |
+| `applies-when: <shell-cmd>` | Inside `get_column_applies`, called with `cwd=path` | Expensive — shell invocation per project (cached) | The gate requires touching the filesystem in a way no existing column captures (`test -f .hgignore`, `git config --get something`) |
 
-When both are present: SQL gate runs first; if it passes, the shell gate runs; if both pass, `value-from` runs. NULL on any failure or gate miss. The shell gate's exit code is the signal: zero → applicable, non-zero → not applicable.
+When both are present: SQL gate runs first (via the generated-column `CASE WHEN`); if it passes, the shell gate runs (via `get_column_applies`); if both pass, `value-from` runs. The shell gate's exit code is the signal: zero → applicable, non-zero → not applicable.
 
 The `applies-when` shell command is part of the cache key (hash) so editing it invalidates cached values.
+
+### Applicability as a queryable column
+
+Because `_applies` is a real virtual column, it's directly queryable:
+
+```bash
+# Find projects where the license check doesn't apply (i.e., non-oss)
+proj query 'name, has_license_applies' --where 'not has_license_applies'
+
+# Find OSS projects with no license (applies AND value=0)
+proj query name --where 'has_license_applies and has_license = 0'
+
+# Find OSS projects where the check errored (applies AND value IS NULL)
+proj query name --where 'has_license_applies and has_license is null'
+```
 
 ### Type system
 
@@ -233,15 +296,21 @@ grouped_columns:
 ```
 
 **Count semantics:**
-- `mode: applicable` — `passed / applicable` (NULLs excluded from denominator)
-- `mode: all` — `passed / total` (NULLs counted as not-passed in denominator)
+- `mode: applicable` — `passed / applicable` (where `applies=1`; non-applicable excluded from denominator)
+- `mode: all` — `passed / total` (all input columns counted in denominator regardless of applicability)
 
-**Symbols:**
-- `mark-good` → `✓`
-- `mark-bad` → `✗`
-- `mark-ignored` → `?`
+**Per-cell rendering:** for each input column, look at the pair `(<name>_applies, <name>)`:
 
-**Implementation:** at command-build time, the SELECT auto-projects all input columns (whether or not the user listed them in `columns:`). After SQLite returns rows, the formatter walks each row's grouped columns and emits a multi-line cell.
+| `_applies` | value | state | render config | symbol |
+|---|---|---|---|---|
+| 0 | NULL | not applicable | `on_na` | `?` |
+| 1 | 1 | pass | `on_pass` | `✓` |
+| 1 | 0 | fail | `on_fail` | `✗` |
+| 1 | NULL | error | `on_fail` (rolled in; can split later) | `✗` |
+
+`hide` skips the line entirely.
+
+**Implementation:** at command-build time, the SELECT auto-projects each input column **and its `_applies` partner** (whether or not the user listed them in `columns:`). After SQLite returns rows, the formatter walks each row's grouped columns and emits a multi-line cell using both halves of each pair.
 
 Example — audit (hide passes and N/A, show only failures):
 ```yaml
@@ -458,7 +527,8 @@ proj new python-uv my-experiment
 
 ## Open implementation notes
 
-- **Cache key** for user-defined columns includes a hash of `value-from` (and `applies-when`, if present) so editing either invalidates entries.
+- **Cache key** for user-defined columns includes a hash of `value-from` (and `applies-when`, if present) so editing either invalidates entries. The `_applies` result caches separately under key `<name>__applies` (double underscore distinguishes from a hypothetical column literally named `name_applies` — though that name is reserved).
+- **Reserved suffix**: column names ending in `_applies` are rejected at manifest load.
 - **Parallel runs** share the cache via per-key file lock.
 - **Tag column declaration**: when materializing the schema, the set of all tags referenced in any project's `tags:` is collected; each becomes a non-virtual INTEGER column, populated at INSERT.
 - **`--where` from CLI and command-level `where:`** combine via `AND`.
