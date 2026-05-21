@@ -7,7 +7,7 @@
 
 `proj` is a CLI for managing a flat directory of heterogeneous projects (OSS checkouts, experiments, datasets, personal code) with tagging, auditing, and cross-project task execution. It operates on a *global* workspace declared in a user-level manifest, not a workspace-local one.
 
-The original spec called for an ad-hoc query/filter model split across `tags`, auto-detected properties, named checks, and a fixed command set. This design replaces all of those with two uniform abstractions: **columns** (everything observable about a project) and **commands** (everything you do with that data), both backed by in-memory SQLite. Tags, language detection, check predicates, audit, dust, status, and clean all collapse into configurable command definitions over columns. `--where` is the universal filter on every command.
+The original spec called for an ad-hoc query/filter model split across `tags`, auto-detected properties, named checks, and a fixed command set. This design replaces all of those with two uniform abstractions: **columns** (everything observable about a project) and **commands** (everything you do with that data), backed by in-memory SQLite. Tags, language detection, check predicates, audit, dust, status, clean, and archive all collapse into configurable command definitions over columns. `--where` is the universal filter on every command, and `forget`/`adopt` are the two primitives that mutate the manifest from inside a shell pipeline.
 
 ## Core model
 
@@ -30,17 +30,17 @@ Users can **override any built-in column** by redeclaring it in their manifest.
 
 ### Commands
 
-Two command types are user-definable: `query` and `run`. Five primitives are hardcoded because they require imperative orchestration:
+Two command types are user-definable: `query` and `run`. Five primitives are hardcoded because they require imperative orchestration the YAML model can't express:
 
 | Hardcoded primitive | Why it's not configurable |
 |---|---|
 | `query` | Exec arbitrary SQL — the underlying engine itself |
 | `run` | Exec a shell command per matching project — the underlying engine itself |
-| `adopt` | Interactive manifest edit |
+| `adopt` | Interactive manifest edit (add project, prompt for tags) |
+| `forget` | Manifest edit (remove a project entry) |
 | `new` | Template runner + manifest update |
-| `archive` | Multi-step (clean → tar → move → manifest update) |
 
-Everything else — `ls`, `status`, `clean`, `audit`, plus anything the user invents (`fmt`, `lint`, `pull`) — is a user-overridable command defined in YAML. Bundled defaults ship inside the package and are merged before the user's manifest, so user definitions override defaults entry-by-entry.
+Everything else — `ls`, `status`, `clean`, `audit`, `archive`, plus anything the user invents (`fmt`, `lint`, `pull`) — is a user-overridable command defined in YAML. Bundled defaults ship inside the package and are merged before the user's manifest, so user definitions override defaults entry-by-entry.
 
 `proj <name>` resolution: hardcoded primitive (if matched) wins; otherwise look up `commands.<name>` in the merged config.
 
@@ -92,7 +92,11 @@ commands:
     columns: [name, path]
     grouped_columns:
       audit:
-        applicable: [has_readme, swp_in_gitignore, has_license]
+        mode: applicable
+        columns: [has_readme, swp_in_gitignore, has_license]
+        on_pass: hide
+        on_fail: mark-bad
+        on_na: hide
 
   fmt:                                   # user-invented
     type: run
@@ -196,9 +200,31 @@ Example: `--where 'size > gb(1) and last_modified < ago("6m")'`
 
 ### Grouped columns
 
-A `query`-type command can project **grouped columns** that aggregate multiple input columns into a single derived value per row. v1 ships one grouping kind: `applicable` — counts how many of a list of columns apply and how many pass.
+A `query`-type command can project **grouped columns**: multi-line cells that combine N input boolean columns into a count summary plus per-column status lines. Aggregation happens in **Python**, not SQL — SQLite projects raw column values, the formatter renders them.
 
-Manifest:
+Manifest schema:
+```yaml
+grouped_columns:
+  <output_column_name>:
+    mode: applicable | all
+    columns: [<col>, ...]              # input boolean columns
+    on_pass: hide | mark-good          # how to render a true value
+    on_fail: hide | mark-bad           # how to render a false value
+    on_na:   hide | mark-ignored       # how to render NULL (applies-to filtered it out)
+```
+
+**Count semantics:**
+- `mode: applicable` — `passed / applicable` (NULLs excluded from denominator)
+- `mode: all` — `passed / total` (NULLs counted as not-passed in denominator)
+
+**Symbols:**
+- `mark-good` → `✓`
+- `mark-bad` → `✗`
+- `mark-ignored` → `?`
+
+**Implementation:** at command-build time, the SELECT auto-projects all input columns (whether or not the user listed them in `columns:`). After SQLite returns rows, the formatter walks each row's grouped columns and emits a multi-line cell.
+
+Example — audit (hide passes and N/A, show only failures):
 ```yaml
 commands:
   audit:
@@ -206,30 +232,51 @@ commands:
     columns: [name, path]
     grouped_columns:
       audit:
-        applicable: [has_readme, swp_in_gitignore, has_license]
+        mode: applicable
+        columns: [has_readme, swp_in_gitignore, has_license]
+        on_pass: hide
+        on_fail: mark-bad
+        on_na: hide
 ```
-
-Expands at command-build time to:
-```sql
-SELECT name, path,
-  CAST(COALESCE(has_readme,0) + COALESCE(swp_in_gitignore,0) + COALESCE(has_license,0) AS TEXT)
-    || '/' ||
-  CAST(((has_readme IS NOT NULL) + (swp_in_gitignore IS NOT NULL) + (has_license IS NOT NULL)) AS TEXT)
-    AS audit
-FROM projects;
-```
-
-Sample output:
+Output:
 ```
 NAME            PATH                       AUDIT
-my-cool-lib     /home/me/projects/lib      3/3
-pandas-fork     /home/me/projects/pandas   2/3
-weekend-game    /home/me/projects/game     0/0
+my-cool-lib     /path/lib                  3/3
+pandas-fork     /path/pandas               2/3
+                                           ✗ has_license
+weekend-game    /path/game                 0/0
 ```
 
-A project where no columns apply shows `0/0`. Drill-down: `proj query 'name, has_readme, has_license, swp_in_gitignore' --where 'has_readme = 0 or has_license = 0 or swp_in_gitignore = 0'`.
+Example — full checks dashboard (show everything):
+```yaml
+commands:
+  checks:
+    type: query
+    columns: [name]
+    grouped_columns:
+      checks:
+        mode: all
+        columns: [has_readme, swp_in_gitignore, has_license]
+        on_pass: mark-good
+        on_fail: mark-bad
+        on_na: mark-ignored
+```
+Output:
+```
+NAME            CHECKS
+my-cool-lib     3/3
+                ✓ has_readme
+                ✓ swp_in_gitignore
+                ✓ has_license
+pandas-fork     1/3
+                ✓ has_readme
+                ✗ swp_in_gitignore
+                ? has_license
+```
 
-Future grouping kinds (out of scope for v1) could include `min`, `max`, `count_failing`, `failing_names`.
+Drill-down to find a specific failure: `proj query 'name, has_license' --where 'has_license = 0'`.
+
+Future symbol/mode extensions are non-breaking (new enum values for `on_pass`/`on_fail`/`on_na`, new `mode:` values).
 
 ## Commands
 
@@ -240,10 +287,10 @@ All commands accept `--where <sql-expr>` as a filter and `--format table|json|pl
 | Command | Purpose |
 |---|---|
 | `proj query <input> [--where <expr>] [--order-by <col>] [--limit N] [--group-by <col>]` | Execute SQL. If `<input>` matches `^\s*select\s+`, run verbatim. Otherwise treat as comma-separated column list and wrap as `SELECT <input> FROM projects [WHERE ...] [GROUP BY ...] [ORDER BY ...] [LIMIT ...]`. |
-| `proj run <cmd> [--where ...] [--parallel] [--summary] [--only-matches] [--only-failures]` | Run shell command in each matching project (cwd set to project path). Exit code = number of failures. |
-| `proj adopt [<subdir>]` | Interactively promote an unknown subdirectory to a declared project. Prompts for tags. |
+| `proj run <cmd> [--where ...] [--parallel] [--summary] [--only-matches] [--only-failures] [--dry-run]` | Run shell command in each matching project (cwd set to project path). Exit code = number of failures. |
+| `proj adopt [<subdir>]` | Interactively promote an unknown subdirectory to a declared project. Prompts for tags. Writes to manifest. |
+| `proj forget <name>` | Remove a project entry from the manifest. Does not touch the filesystem. |
 | `proj new <template> <name>` | Run template's `cmds` with `{{var}}` interpolation, auto-add to manifest with template's tags. |
-| `proj archive [--where ...] [--dry-run] [--restore <name>]` | Run clean target, compress to `archive_dir`, update manifest. |
 
 ### Bundled default commands
 
@@ -271,7 +318,19 @@ commands:
     columns: [name, path]
     grouped_columns:
       audit:
-        applicable: [has_readme, has_license]
+        mode: applicable
+        columns: [has_readme, has_license]
+        on_pass: hide
+        on_fail: mark-bad
+        on_na: hide
+
+  archive:
+    type: run
+    cmd:
+      - cd {{path}} && [ -n "{{clean_target}}" ] && {{clean_target}} || true
+      - tar -C {{workspace_root}} -caf {{archive_dir}}/{{name}}.tar.zst {{name}}
+      - rm -rf {{path}}
+      - proj forget {{name}}
 ```
 
 ### `query`-type command schema
@@ -280,9 +339,13 @@ commands:
 <name>:
   type: query
   columns: [<col>, ...]              # required; output columns
-  grouped_columns:                   # optional; derived projections
+  grouped_columns:                   # optional; per-row multi-line cell projections
     <output_col_name>:
-      applicable: [<col>, ...]       # v1: only "applicable" kind supported
+      mode: applicable | all
+      columns: [<col>, ...]
+      on_pass: hide | mark-good
+      on_fail: hide | mark-bad
+      on_na:   hide | mark-ignored
   where: <sql-expr>                  # optional; merged with --where via AND
   order_by: <col-or-expr>            # optional
   limit: <int>                       # optional
@@ -293,25 +356,27 @@ commands:
 ```yaml
 <name>:
   type: run
-  cmd: <shell-command>               # required; {{path}}, {{name}}, and any column value can be interpolated
+  cmd: <shell-command> | [<shell-command>, ...]   # required; string or list (sequential, fail on first non-zero)
   where: <sql-expr>                  # optional; merged with --where via AND
   parallel: <bool>                   # optional; default from settings.parallel
   summary: <bool>                    # optional; default false
   scope: <single|aggregate>          # optional; overrides type default
 ```
 
-Variable interpolation in `cmd` uses `{{column_name}}`. Any column referenced is auto-required (added to materialization), so `cmd: "cd {{path}} && {{clean_target}}"` causes `clean_target` to be evaluated for each row.
+Variable interpolation in `cmd` uses `{{column_name}}`. Any column referenced is auto-required (added to materialization), so `cmd: "cd {{path}} && {{clean_target}}"` causes `clean_target` to be evaluated for each row. `{{workspace_root}}` and `{{archive_dir}}` are also available.
 
-`--dry-run` is available on all `run`-type commands and the `run` primitive: prints the interpolated command per project without executing.
+When `cmd` is a list, each entry runs as a separate shell invocation in sequence; first non-zero exit halts further steps for that project (subsequent projects still run unless `--summary` already failed).
 
-**Note on `--group-by` vs `grouped_columns`:** these are unrelated. `--group-by` is SQL `GROUP BY` (aggregates rows). `grouped_columns` is a per-row projection that combines multiple input columns into one output column.
+`--dry-run` is available on all `run`-type commands and the `run` primitive: prints the interpolated command(s) per project without executing.
+
+**Note on `--group-by` vs `grouped_columns`:** unrelated. `--group-by` is SQL `GROUP BY` (aggregates rows). `grouped_columns` is a per-row Python-side projection that combines multiple input columns into one multi-line output cell.
 
 ### Invocation context
 
 `proj` is invokable from anywhere on the filesystem. Scope is determined by **command type**:
 
 - **`run`-type commands** (and the `run` primitive) default to **single-project** when invoked inside a project: auto-scope to the current project.
-- **`query`-type commands** (and the `query` primitive, plus `archive`) default to **aggregate**: always cover the workspace regardless of cwd.
+- **`query`-type commands** (and the `query` primitive) default to **aggregate**: always cover the workspace regardless of cwd.
 - Override with `--all` (force workspace) or `--here` (force current project).
 - A command config may set `scope: single|aggregate` to override the type default (e.g., a `status` query that the user wants to default to single-project inside one).
 
@@ -358,17 +423,18 @@ proj new python-uv my-experiment
 ## What's dropped from the original spec
 
 - **Workspace-local `projects.yaml`** — replaced by global `~/.config/proj/projects.yaml`.
-- **Fixed command set** — `list`, `status`, `clean`, `audit`, `dust` are now user-overridable commands shipped as defaults; the spec keeps `ls` and `audit` semantics intact but they're no longer hardcoded.
+- **Fixed command set** — `list`, `status`, `clean`, `audit`, `dust`, `archive` are now user-overridable commands shipped as defaults; the spec keeps their semantics intact but they're no longer hardcoded.
 - **Standalone `dust` command** — covered by the bundled `ls` default plus `proj query`; users can add a personal `dust` command if they want a specialized one.
 - **Separate aggregate command** — collapses into `proj query` with `GROUP BY`.
 - **Special "checks" concept** — checks are just boolean columns; audit is a query with a grouped projection.
+- **`proj archive --restore`** — restore is now manual: `tar xzf` plus `proj adopt`. Can be added later as a bundled `restore` command if it earns its weight.
 
 ## v1 scope cuts (designed for, not built)
 
 - AI-driven `proj new` (users can already invoke `claude` from a template's `cmds`)
 - Plugin/extension system for built-in columns
 - Concurrent cache writes (single-process v1; file lock if/when needed)
-- Additional grouping kinds (`min`, `max`, `count_failing`, `failing_names`)
+- Additional grouped-column modes/symbols beyond `applicable`/`all` and the three marks
 - `proj config dump` to show effective merged config
 
 ## Open implementation notes
