@@ -1,8 +1,6 @@
 from pathlib import Path
 
-import pytest
-
-from proj.paths import config_path, cache_dir, resolve_project_path
+from proj.paths import cache_dir, config_path, resolve_project_path
 
 
 def test_config_path_is_under_xdg_config_home(monkeypatch, tmp_path):
