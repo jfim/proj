@@ -1,12 +1,13 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from proj.builtins import register_cheap_builtins
 from proj.cache import Cache
 from proj.columns import ColumnRegistry
 from proj.dispatch import Dispatcher
-from proj.engine import build_engine, build_query
+from proj.engine import build_engine, build_from_manifest_path, build_query
 from proj.projects import Project, ProjectRegistry
 
 
@@ -118,3 +119,20 @@ def test_build_query_full_select_passes_through():
 def test_build_query_full_select_with_extra_clauses_raises():
     with pytest.raises(ValueError, match="full SELECT"):
         build_query("select name from projects", where="mine")
+
+
+def test_build_from_manifest_end_to_end(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "foo").mkdir()
+    (workspace / "foo" / "Cargo.toml").write_text("")
+
+    manifest_path = tmp_path / "projects.yaml"
+    manifest_path.write_text(yaml.safe_dump({
+        "workspace": {"root": str(workspace)},
+        "projects": {"foo": {"tags": ["mine"]}},
+    }))
+
+    engine = build_from_manifest_path(manifest_path, cache_path=tmp_path / "cache.db")
+    rows = engine.execute("SELECT name, lang_rust, mine FROM projects").fetchall()
+    assert rows == [("foo", 1, 1)]

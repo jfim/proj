@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import re as _re
 import sqlite3
+from pathlib import Path as _Path
 
-from proj.columns import ColumnRegistry, ColumnSpec
+from proj.builtins import register_cheap_builtins, register_expensive_builtins
+from proj.cache import Cache as _Cache
+from proj.columns import ColumnRegistry, ColumnSpec, register_user_columns
 from proj.dispatch import Dispatcher
+from proj.manifest import load_manifest
 from proj.projects import ProjectRegistry
 from proj.sql_funcs import ago, gb, kb, mb
 
@@ -157,3 +161,15 @@ def build_query(
     if limit is not None:
         parts.append(f"LIMIT {limit}")
     return " ".join(parts)
+
+
+def build_from_manifest_path(manifest_path: _Path, cache_path: _Path) -> Engine:
+    manifest = load_manifest(manifest_path)
+    projects = ProjectRegistry.from_manifest(manifest)
+    columns = ColumnRegistry()
+    register_cheap_builtins(columns)
+    register_expensive_builtins(columns)
+    register_user_columns(columns, manifest.columns)
+    cache = _Cache(cache_path)
+    dispatcher = Dispatcher(columns, projects, cache)
+    return build_engine(projects, columns, dispatcher)
