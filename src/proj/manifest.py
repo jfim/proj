@@ -95,12 +95,18 @@ def load_manifest(path: Path) -> Manifest:
         raise ManifestError("workspace.root is required")
     workspace_root = Path(str(ws["root"])).expanduser().resolve()
 
+    raw_projects = data.get("projects") or {}
+    if not isinstance(raw_projects, dict):
+        raise ManifestError("'projects' must be a mapping")
     projects: dict[str, ProjectEntry] = {}
-    for pname, praw in (data.get("projects") or {}).items():
+    for pname, praw in raw_projects.items():
         projects[pname] = _parse_project(pname, praw)
 
+    raw_columns = data.get("columns") or {}
+    if not isinstance(raw_columns, dict):
+        raise ManifestError("'columns' must be a mapping")
     columns: dict[str, ColumnEntry] = {}
-    for cname, craw in (data.get("columns") or {}).items():
+    for cname, craw in raw_columns.items():
         columns[cname] = _parse_column(cname, craw)
 
     settings = dict(data.get("settings") or {})

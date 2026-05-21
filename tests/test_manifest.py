@@ -138,3 +138,22 @@ def test_unknown_column_type_errors(tmp_path):
     })
     with pytest.raises(ManifestError, match="type"):
         load_manifest(p)
+
+
+def test_projects_as_non_dict_errors(tmp_path):
+    p = write(tmp_path, {
+        "workspace": {"root": str(tmp_path)},
+        "projects": ["foo", "bar"],
+    })
+    with pytest.raises(ManifestError, match="projects"):
+        load_manifest(p)
+
+
+def test_columns_as_non_dict_errors(tmp_path):
+    p = write(tmp_path, {
+        "workspace": {"root": str(tmp_path)},
+        "projects": {},
+        "columns": ["foo", "bar"],
+    })
+    with pytest.raises(ManifestError, match="columns"):
+        load_manifest(p)
