@@ -526,7 +526,14 @@ All commands accept `--where <sql-expr>` as a filter and `--format table|json|pl
 
 ### Bundled default commands
 
-Shipped in `proj/defaults.yaml`, merged before the user's manifest. Users override by redefining the same key.
+Shipped as a real, user-visible YAML file at `proj/defaults.yaml` inside the installed package — i.e., something like `<site-packages>/proj/defaults.yaml`. Merged before the user's manifest; users override by redefining the same key.
+
+Discoverability:
+- `proj defaults` prints the file's contents to stdout. Redirect to a file (`proj defaults > my-starter.yaml`) to use as a starting point.
+- `proj defaults --path` prints the absolute path to the shipped file so users can `cat`, `less`, or symlink it.
+- The file is intentionally readable: it documents the schema by example. New users can `proj defaults` and see exactly what `ls`, `status`, `clean`, `audit`, `archive`, the bundled marks, and the column registry look like.
+
+The file is part of the package and read-only at its install path; user customizations live in `~/.config/proj/projects.yaml`.
 
 ```yaml
 commands:
