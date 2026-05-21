@@ -32,52 +32,68 @@ uv run proj --help
 
 ## Quick start
 
-Create a `projects.yaml` at your workspace root:
+Create a manifest at `~/.config/proj/projects.yaml`:
 
 ```yaml
 workspace:
   root: ~/projects
-  defaults:
-    stale_threshold: 6mo
-    large_threshold: 50mb
 
 projects:
-  my-cool-lib:
-    tags: [oss, mine, rust, library]
-  pandas-fork:
-    tags: [oss, not-mine, python]
-
-checks:
-  has-readme:
-    run: test -f README.md
-    tags: [mine]
-    description: "project has a README"
+  my-cool-lib: { tags: [mine, library] }
+  pandas-fork: { tags: [oss] }
+  weekend-game: { tags: [mine, experiment] }
 ```
 
-Then:
+Then query your workspace:
 
 ```bash
-proj list --tag mine
-proj status --filter dirty
-proj run --tag rust 'cargo fmt --check'
-proj audit
-proj dust --stale 6mo --min-size 50mb
-proj clean --dry-run
+proj query 'name, size, dirty' --where 'mine and lang_rust'
+proj query 'name, last_modified' --where 'mine' --order-by 'last_modified desc'
+proj query 'lang_rust, count(*)' --group-by lang_rust
 ```
 
-## Commands
+The `query` command runs SQL against an in-memory table where each project is a row. Tags become boolean columns; built-in columns (`size`, `dirty`, `lang_rust`, `lang_python`, `branch`, `last_modified`, …) are computed lazily and cached on disk.
 
-| Command | Purpose |
-|---|---|
-| `proj list` | List projects, filtered by tag. |
-| `proj run <cmd>` | Run a shell command in each matching project. |
-| `proj status` | Pretty-printed git status across matching projects. |
-| `proj audit` | Run defined checks and display a dashboard. |
-| `proj dust` | Disk usage report, sorted by size. |
-| `proj clean` | Run each project's clean target. |
-| `proj archive` | Move stale projects to a compressed archive. |
+Define your own columns in the manifest:
 
-Run `proj <command> --help` for full options.
+```yaml
+columns:
+  has_license:
+    applies-to: oss                              # SQL where-expression
+    value-from: test -f LICENSE && echo true || echo false
+    type: boolean
+  otp_version:
+    applies-when: test -f .tool-versions          # shell-evaluated gate
+    value-from: grep otp .tool-versions | sed 's/.*-otp-//'
+    type: text
+    cache: true
+```
+
+Each non-tag column synthesizes a paired `<name>_applies` column so you can query applicability directly: `proj query 'name, has_license' --where 'has_license_applies and not has_license'`.
+
+Per-project variables are interpolated as `{{var}}` into your column shell commands:
+
+```yaml
+projects:
+  prod-server-1:
+    tags: [deployment]
+    host: server-1.tld
+columns:
+  is_running:
+    applies-to: deployment
+    value-from: ssh {{host}} 'pgrep -f myapp >/dev/null'
+    type: boolean
+```
+
+## Commands (v1)
+
+| Command | Status | Purpose |
+|---|---|---|
+| `proj query` | ✓ working | Execute SQL against the projects table |
+| `proj ls` / `status` / `clean` / `audit` / `archive` | coming soon | User-configurable commands shipped as defaults |
+| `proj run` / `adopt` / `forget` / `new` | coming soon | Hardcoded primitives |
+
+Run `proj query --help` for the full flag list.
 
 ## Auto-detected properties
 
