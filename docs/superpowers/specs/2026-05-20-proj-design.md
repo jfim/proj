@@ -68,7 +68,7 @@ projects:
 
 columns:
   otp-version:
-    applies-to: lang_elixir              # SQL where-expression; column is NULL when false
+    applies-to: lang_elixir              # SQL where-expression; cheap, baked into schema
     value-from: grep otp .tool-versions | sed 's/.*-otp-//'
     type: text                           # required: text | integer | boolean | real
     cache: true                          # default false
@@ -79,6 +79,10 @@ columns:
   swp_in_gitignore:
     applies-to: git
     value-from: grep -q swp .gitignore && echo true || echo false
+    type: boolean
+  swp_in_hgignore:
+    applies-when: test -f .hgignore      # shell-evaluated; expensive, runs per project
+    value-from: grep -q swp .hgignore && echo true || echo false
     type: boolean
 
 commands:
@@ -147,24 +151,39 @@ One Python function is registered with SQLite via `conn.create_function`:
 
 ```python
 def get_column_value(path: str, column_name: str) -> Any:
-    """Resolve a column value for a project, with caching and type coercion."""
+    """Resolve a column value for a project, with caching, applies-when gating, and type coercion."""
     spec = column_registry[column_name]   # built-in or user-defined
     if spec.cache:
         cached = cache.lookup(path, column_name, spec.cache_key(path))
         if cached is not None:
             return cached
+    if spec.applies_when and not shell_ok(spec.applies_when, cwd=path):
+        return None                       # SQL NULL — not applicable
     try:
         raw = spec.evaluate(path)         # stat, git, shell, etc.
     except Exception as e:
         log.warning("column %s on %s failed: %s", column_name, path, e)
-        return None                       # SQL NULL
+        return None                       # SQL NULL — error
     value = coerce_to_type(raw, spec.type)  # None if coercion fails
     if spec.cache and value is not None:
         cache.store(path, column_name, spec.cache_key(path), value)
     return value
 ```
 
-All built-in extended columns and all user-defined columns flow through this function. It's the single dispatch point where caching, type coercion, and error handling live. `applies-to` gating lives in the generated-column SQL (above), not in this function — by the time `get_column_value` is invoked, applicability is already true.
+All built-in extended columns and all user-defined columns flow through this function. It's the single dispatch point where caching, applies-when gating, type coercion, and error handling live. `applies-to` gating lives in the generated-column SQL (above), not in this function — by the time `get_column_value` is invoked, the cheap SQL-level applicability check has already passed.
+
+### Applicability: two flavors
+
+A column can be gated by either, both, or neither:
+
+| Flavor | Where evaluated | Cost | Use when |
+|---|---|---|---|
+| `applies-to: <sql-expr>` | SQL `CASE WHEN ... THEN ... ELSE NULL END` baked into the generated column | Cheap — references already-materialized columns | The gate is a tag or another column (`lang_elixir`, `oss`, `git`) |
+| `applies-when: <shell-cmd>` | Inside `get_column_value`, before `value-from` runs; `cwd=path` | Expensive — shell invocation per project | The gate requires touching the filesystem in a way no existing column captures (`test -f .hgignore`, `git config --get something`) |
+
+When both are present: SQL gate runs first; if it passes, the shell gate runs; if both pass, `value-from` runs. NULL on any failure or gate miss. The shell gate's exit code is the signal: zero → applicable, non-zero → not applicable.
+
+The `applies-when` shell command is part of the cache key (hash) so editing it invalidates cached values.
 
 ### Type system
 
@@ -439,7 +458,7 @@ proj new python-uv my-experiment
 
 ## Open implementation notes
 
-- **Cache key** for user-defined columns includes a hash of `value-from` so editing the command invalidates entries.
+- **Cache key** for user-defined columns includes a hash of `value-from` (and `applies-when`, if present) so editing either invalidates entries.
 - **Parallel runs** share the cache via per-key file lock.
 - **Tag column declaration**: when materializing the schema, the set of all tags referenced in any project's `tags:` is collected; each becomes a non-virtual INTEGER column, populated at INSERT.
 - **`--where` from CLI and command-level `where:`** combine via `AND`.
