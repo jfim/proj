@@ -100,6 +100,7 @@ commands:
         columns: [has_readme, swp_in_gitignore, has_license]
         on_pass: hide
         on_fail: mark-bad
+        on_error: mark-warn
         on_na: hide
 
   fmt:                                   # user-invented
@@ -290,9 +291,10 @@ grouped_columns:
   <output_column_name>:
     mode: applicable | all
     columns: [<col>, ...]              # input boolean columns
-    on_pass: hide | mark-good          # how to render a true value
-    on_fail: hide | mark-bad           # how to render a false value
-    on_na:   hide | mark-ignored       # how to render NULL (applies-to filtered it out)
+    on_pass:  hide | <mark-name>       # value=1 and applies=1     (default: mark-good)
+    on_fail:  hide | <mark-name>       # value=0 and applies=1     (default: mark-bad)
+    on_error: hide | <mark-name>       # value=NULL and applies=1  (default: mark-warn)
+    on_na:    hide | <mark-name>       # applies=0                 (default: mark-ignored)
 ```
 
 **Count semantics:**
@@ -301,18 +303,52 @@ grouped_columns:
 
 **Per-cell rendering:** for each input column, look at the pair `(<name>_applies, <name>)`:
 
-| `_applies` | value | state | render config | symbol |
+| `_applies` | value | state | config key | default mark |
 |---|---|---|---|---|
-| 0 | NULL | not applicable | `on_na` | `?` |
-| 1 | 1 | pass | `on_pass` | `✓` |
-| 1 | 0 | fail | `on_fail` | `✗` |
-| 1 | NULL | error | `on_fail` (rolled in; can split later) | `✗` |
+| 0 | NULL | not applicable | `on_na` | `mark-ignored` |
+| 1 | 1 | pass | `on_pass` | `mark-good` |
+| 1 | 0 | fail | `on_fail` | `mark-bad` |
+| 1 | NULL | error | `on_error` | `mark-warn` |
 
-`hide` skips the line entirely.
+`hide` skips the line entirely. Any other value names a **mark** (see below).
 
 **Implementation:** at command-build time, the SELECT auto-projects each input column **and its `_applies` partner** (whether or not the user listed them in `columns:`). After SQLite returns rows, the formatter walks each row's grouped columns and emits a multi-line cell using both halves of each pair.
 
-Example — audit (hide passes and N/A, show only failures):
+### Marks
+
+A **mark** is a named visual style for a grouped-column cell line. Each mark has `prefix`, `suffix`, and `color`. The column name is rendered between prefix and suffix in the chosen color:
+
+```
+{prefix}{column_name}{suffix}    (in {color})
+```
+
+Bundled defaults (shipped in `proj/defaults.yaml`, mergeable):
+
+```yaml
+marks:
+  mark-good:    { prefix: "✓ ", suffix: "",            color: green  }
+  mark-bad:     { prefix: "✗ ", suffix: "",            color: red    }
+  mark-warn:    { prefix: "⚠ ", suffix: "",            color: yellow }
+  mark-ignored: { prefix: "",   suffix: " (ignored)",  color: grey   }
+```
+
+Sample output for `mark-good`: green text `"✓ has_readme"`. Sample for `mark-ignored`: grey text `"has_license (ignored)"`.
+
+Users override marks in their manifest:
+
+```yaml
+marks:
+  mark-good:
+    prefix: "✅ "
+    color: bright_green
+  mark-fire:                           # invent new marks freely
+    prefix: "🔥 "
+    color: bright_red
+```
+
+A user-defined mark fully replaces the bundled one (whole-record replacement, no field merging). New mark names can be referenced from any `on_*` field. Color names follow [rich's color spec](https://rich.readthedocs.io/en/latest/appendix/colors.html).
+
+Example — audit (hide passes and N/A, show only failures and errors):
 ```yaml
 commands:
   audit:
@@ -324,6 +360,7 @@ commands:
         columns: [has_readme, swp_in_gitignore, has_license]
         on_pass: hide
         on_fail: mark-bad
+        on_error: mark-warn
         on_na: hide
 ```
 Output:
@@ -347,6 +384,7 @@ commands:
         columns: [has_readme, swp_in_gitignore, has_license]
         on_pass: mark-good
         on_fail: mark-bad
+        on_error: mark-warn
         on_na: mark-ignored
 ```
 Output:
@@ -410,6 +448,7 @@ commands:
         columns: [has_readme, has_license]
         on_pass: hide
         on_fail: mark-bad
+        on_error: mark-warn
         on_na: hide
 
   archive:
@@ -431,9 +470,10 @@ commands:
     <output_col_name>:
       mode: applicable | all
       columns: [<col>, ...]
-      on_pass: hide | mark-good
-      on_fail: hide | mark-bad
-      on_na:   hide | mark-ignored
+      on_pass:  hide | <mark-name>   # default mark-good
+      on_fail:  hide | <mark-name>   # default mark-bad
+      on_error: hide | <mark-name>   # default mark-warn
+      on_na:    hide | <mark-name>   # default mark-ignored
   where: <sql-expr>                  # optional; merged with --where via AND
   order_by: <col-or-expr>            # optional
   limit: <int>                       # optional
