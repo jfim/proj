@@ -33,6 +33,19 @@ def _ref(name: str) -> str:
     return _quote_ident(name) if _column_needs_quoting(name) else name
 
 
+_BARE_IDENT_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def render_select_part(s: str) -> str:
+    """Render one entry of a query command's ``columns:`` list.
+
+    A bare identifier (e.g. ``last_modified``, ``my-col``) is quoted as a column
+    reference. Anything else is passed through verbatim so users can write SQL
+    expressions like ``datetime(last_modified, "unixepoch") as modified``.
+    """
+    return _ref(s) if _BARE_IDENT_RE.match(s) else s
+
+
 class Engine:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn

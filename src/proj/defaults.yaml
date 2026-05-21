@@ -42,7 +42,12 @@ columns:
 commands:
   ls:
     type: query
-    columns: [name, last_modified]
+    # Column entries are SQL select-list parts: bare identifiers are
+    # quoted as column refs, anything else is passed through verbatim —
+    # so you can use SQLite functions and aliases here.
+    columns:
+      - name
+      - 'datetime(last_modified, "unixepoch") as modified'
     order_by: name
 
   status:

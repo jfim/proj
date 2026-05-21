@@ -8,7 +8,7 @@ from proj.cache import Cache
 from proj.columns import ColumnRegistry, register_user_columns
 from proj.defaults_loader import load_default_columns
 from proj.dispatch import Dispatcher
-from proj.engine import build_engine, build_from_manifest_path, build_query
+from proj.engine import build_engine, build_from_manifest_path, build_query, render_select_part
 from proj.projects import Project, ProjectRegistry
 
 
@@ -149,6 +149,20 @@ def test_build_from_manifest_end_to_end(tmp_path):
     engine = build_from_manifest_path(manifest_path, cache_path=tmp_path / "cache.db")
     rows = engine.execute("SELECT name, lang_rust, mine FROM projects").fetchall()
     assert rows == [("foo", 1, 1)]
+
+
+def test_render_select_part_bare_ident_quoted_only_if_needed():
+    assert render_select_part("name") == "name"
+    assert render_select_part("last_modified") == "last_modified"
+    # Hyphens require quoting but it's still a bare identifier.
+    assert render_select_part("my-col") == '"my-col"'
+
+
+def test_render_select_part_expressions_pass_through():
+    expr = 'datetime(last_modified, "unixepoch") as modified'
+    assert render_select_part(expr) == expr
+    assert render_select_part("count(*)") == "count(*)"
+    assert render_select_part("size / 1024") == "size / 1024"
 
 
 def test_default_git_columns_via_shell(tmp_path):
