@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from proj.errors import UnknownColumnError
+from proj.manifest import ColumnEntry
 
 Evaluator = Callable[[str, Path], Any]
 """Signature: (rendered_command_or_marker, cwd) -> raw_value_to_coerce."""
@@ -99,3 +100,18 @@ def make_shell_evaluator(timeout: float = 30.0) -> Evaluator:
             return None
         return result.stdout.strip()
     return evaluator
+
+
+def register_user_columns(reg: ColumnRegistry, entries: dict[str, ColumnEntry]) -> None:
+    """Register user-defined columns from the manifest. Overrides built-ins of the same name."""
+    shell_eval = make_shell_evaluator()
+    for _name, entry in entries.items():
+        reg.register(ColumnSpec(
+            name=entry.name,
+            type=entry.type,
+            applies_to=entry.applies_to,
+            applies_when=entry.applies_when,
+            cache=entry.cache,
+            value_from_template=entry.value_from,
+            evaluator=shell_eval,
+        ))

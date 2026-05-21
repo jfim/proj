@@ -2,6 +2,7 @@ import pytest
 
 from proj.columns import ColumnRegistry, ColumnSpec, coerce_to_type
 from proj.errors import UnknownColumnError
+from proj.manifest import ColumnEntry
 
 
 def dummy_eval(rendered: str, cwd) -> str:
@@ -122,3 +123,21 @@ def test_shell_evaluator_timeout_returns_none(tmp_path):
     ev = make_shell_evaluator(timeout=0.1)
     out = ev("sleep 1", tmp_path)
     assert out is None
+
+
+def test_register_user_columns_creates_specs():
+    from proj.columns import register_user_columns
+
+    entries = {
+        "has_lic": ColumnEntry(
+            name="has_lic", type="boolean",
+            value_from="test -f LICENSE && echo true || echo false",
+            applies_to="oss", applies_when=None, cache=False,
+        ),
+    }
+    reg = ColumnRegistry()
+    register_user_columns(reg, entries)
+    spec = reg.get("has_lic")
+    assert spec.applies_to == "oss"
+    assert spec.value_from_template.startswith("test -f LICENSE")
+    assert spec.type == "boolean"
