@@ -66,6 +66,22 @@ projects:
   churn-analysis:
     tags: [dataset, work]
 
+  # Project variables: any key beyond `tags` and `path` is a per-project
+  # variable available as {{key}} in this project's column value-from and
+  # command cmd strings. Multiple project entries can share a `path:`.
+  my-app:
+    tags: [oss, mine]
+  my-app-server-1:
+    tags: [my-app, deployment]
+    path: my-app                    # share source dir with the my-app entry
+    deploy-path: /var/foo
+    host: server-1.tld
+  my-app-server-2:
+    tags: [my-app, deployment]
+    path: my-app
+    deploy-path: /var/bar
+    host: server-2.tld
+
 columns:
   otp-version:
     applies-to: lang_elixir              # SQL where-expression; cheap, baked into schema
@@ -84,6 +100,21 @@ columns:
     applies-when: test -f .hgignore      # shell-evaluated; expensive, runs per project
     value-from: grep -q swp .hgignore && echo true || echo false
     type: boolean
+
+  # Columns can reference per-project variables via {{key}}
+  is_running:
+    applies-to: my-app AND deployment
+    value-from: ssh {{host}} 'pgrep -f myapp >/dev/null && echo true || echo false'
+    type: boolean
+    cache: false                         # don't cache live state
+  deployed_version:
+    applies-to: my-app AND deployment
+    value-from: ssh {{host}} 'cat {{deploy-path}}/version.txt'
+    type: text
+  source_version:
+    applies-to: my-app
+    value-from: cat {{path}}/version.txt
+    type: text
 
 commands:
   ls:                                    # overrides bundled default
@@ -137,45 +168,45 @@ CREATE TABLE projects (
 
     -- ungated column: _applies is constant 1
     size_applies INTEGER GENERATED ALWAYS AS (1) VIRTUAL,
-    size         INTEGER GENERATED ALWAYS AS (get_column_value(path, 'size')) VIRTUAL,
+    size         INTEGER GENERATED ALWAYS AS (get_column_value(name, 'size')) VIRTUAL,
 
     -- applies-to gate: SQL CASE referencing other columns
     dirty_applies INTEGER GENERATED ALWAYS AS (
-        CASE WHEN git THEN get_column_applies(path, 'dirty') ELSE 0 END
+        CASE WHEN git THEN get_column_applies(name, 'dirty') ELSE 0 END
     ) VIRTUAL,
     dirty INTEGER GENERATED ALWAYS AS (
-        CASE WHEN git THEN get_column_value(path, 'dirty') ELSE NULL END
+        CASE WHEN git THEN get_column_value(name, 'dirty') ELSE NULL END
     ) VIRTUAL,
 
     has_license_applies INTEGER GENERATED ALWAYS AS (
-        CASE WHEN oss THEN get_column_applies(path, 'has_license') ELSE 0 END
+        CASE WHEN oss THEN get_column_applies(name, 'has_license') ELSE 0 END
     ) VIRTUAL,
     has_license INTEGER GENERATED ALWAYS AS (
-        CASE WHEN oss THEN get_column_value(path, 'has_license') ELSE NULL END
+        CASE WHEN oss THEN get_column_value(name, 'has_license') ELSE NULL END
     ) VIRTUAL,
 
     -- applies-when gate: lives inside get_column_applies (shell-evaluated)
     swp_in_hgignore_applies INTEGER GENERATED ALWAYS AS (
-        get_column_applies(path, 'swp_in_hgignore')
+        get_column_applies(name, 'swp_in_hgignore')
     ) VIRTUAL,
     swp_in_hgignore INTEGER GENERATED ALWAYS AS (
-        get_column_value(path, 'swp_in_hgignore')
+        get_column_value(name, 'swp_in_hgignore')
     ) VIRTUAL,
 
     -- both gates: SQL CASE wraps get_column_applies
     "otp-version_applies" INTEGER GENERATED ALWAYS AS (
-        CASE WHEN lang_elixir THEN get_column_applies(path, 'otp-version') ELSE 0 END
+        CASE WHEN lang_elixir THEN get_column_applies(name, 'otp-version') ELSE 0 END
     ) VIRTUAL,
     "otp-version" TEXT GENERATED ALWAYS AS (
-        CASE WHEN lang_elixir THEN get_column_value(path, 'otp-version') ELSE NULL END
+        CASE WHEN lang_elixir THEN get_column_value(name, 'otp-version') ELSE NULL END
     ) VIRTUAL
 );
 ```
 
 Two SQLite-registered Python functions back this:
 
-- `get_column_value(path, name)` — returns the column's value, or `NULL` on error / applies-when miss
-- `get_column_applies(path, name)` — returns `1` (applicable) or `0` (not applicable) based on the column's `applies-when`. Returns `1` when no `applies-when` is declared.
+- `get_column_value(name, column_name)` — returns the column's value, or `NULL` on error / applies-when miss
+- `get_column_applies(name, column_name)` — returns `1` (applicable) or `0` (not applicable) based on the column's `applies-when`. Returns `1` when no `applies-when` is declared.
 
 The SQL-level `applies-to` gate is baked into **both** the value and `_applies` expressions (it references other columns, which only SQL can see). The `applies-when` gate lives inside `get_column_applies`. `get_column_value` also internally invokes the applies-when check before running `value-from`, so a query that selects only the value column (not `_applies`) still gets correct NULLs.
 
@@ -183,41 +214,49 @@ The `_applies` suffix is reserved; the manifest validator errors if a user-defin
 
 ### Dispatch functions
 
-Two Python functions are registered with SQLite via `conn.create_function`:
+Two Python functions are registered with SQLite via `conn.create_function`. Both take `name` (the project name), not just path, so they can resolve per-project variables for interpolation:
 
 ```python
-def get_column_applies(path: str, column_name: str) -> int:
+def get_column_applies(name: str, column_name: str) -> int:
     """Return 1 if the column's applies-when condition is satisfied (or no applies-when), else 0."""
     spec = column_registry[column_name]
     if spec.applies_when is None:
         return 1
-    cached = cache.lookup(path, f"{column_name}__applies", spec.cache_key(path))
+    project = project_registry[name]
+    rendered = interpolate(spec.applies_when, project.vars)  # {{host}}, {{path}}, etc.
+    cache_key = spec.cache_key(name, rendered)
+    cached = cache.lookup(name, f"{column_name}__applies", cache_key)
     if cached is not None:
         return cached
-    applies = 1 if shell_ok(spec.applies_when, cwd=path) else 0
-    cache.store(path, f"{column_name}__applies", spec.cache_key(path), applies)
+    applies = 1 if shell_ok(rendered, cwd=project.path) else 0
+    cache.store(name, f"{column_name}__applies", cache_key, applies)
     return applies
 
 
-def get_column_value(path: str, column_name: str) -> Any:
+def get_column_value(name: str, column_name: str) -> Any:
     """Resolve a column value for a project, with caching, applies-when gating, and type coercion."""
     spec = column_registry[column_name]
-    if get_column_applies(path, column_name) == 0:
+    if get_column_applies(name, column_name) == 0:
         return None                       # SQL NULL — not applicable
+    project = project_registry[name]
+    rendered = interpolate(spec.value_from, project.vars)
+    cache_key = spec.cache_key(name, rendered)
     if spec.cache:
-        cached = cache.lookup(path, column_name, spec.cache_key(path))
+        cached = cache.lookup(name, column_name, cache_key)
         if cached is not None:
             return cached
     try:
-        raw = spec.evaluate(path)         # stat, git, shell, etc.
+        raw = spec.evaluate(rendered, cwd=project.path)
     except Exception as e:
-        log.warning("column %s on %s failed: %s", column_name, path, e)
+        log.warning("column %s on %s failed: %s", column_name, name, e)
         return None                       # SQL NULL — error
-    value = coerce_to_type(raw, spec.type)  # None if coercion fails
+    value = coerce_to_type(raw, spec.type)
     if spec.cache and value is not None:
-        cache.store(path, column_name, spec.cache_key(path), value)
+        cache.store(name, column_name, cache_key, value)
     return value
 ```
+
+The cache key hashes the **post-interpolation** command string, so editing a project's variable (e.g., changing `host`) automatically invalidates that project's cached values for columns that reference the changed variable.
 
 All built-in extended columns and all user-defined columns flow through these functions. They are the single dispatch points where caching, applies-when gating, type coercion, and error handling live. `applies-to` gating lives in the generated-column SQL (above), not in these functions — by the time either is invoked, the cheap SQL-level applicability check has already passed.
 
@@ -228,11 +267,47 @@ A column can be gated by either, both, or neither:
 | Flavor | Where evaluated | Cost | Use when |
 |---|---|---|---|
 | `applies-to: <sql-expr>` | SQL `CASE WHEN ... THEN ... ELSE NULL END` baked into both the value and `_applies` generated columns | Cheap — references already-materialized columns | The gate is a tag or another column (`lang_elixir`, `oss`, `git`) |
-| `applies-when: <shell-cmd>` | Inside `get_column_applies`, called with `cwd=path` | Expensive — shell invocation per project (cached) | The gate requires touching the filesystem in a way no existing column captures (`test -f .hgignore`, `git config --get something`) |
+| `applies-when: <shell-cmd>` | Inside `get_column_applies`, called with `cwd` = project path; `{{var}}` interpolation applies | Expensive — shell invocation per project (cached) | The gate requires touching the filesystem in a way no existing column captures (`test -f .hgignore`, `git config --get something`) |
 
 When both are present: SQL gate runs first (via the generated-column `CASE WHEN`); if it passes, the shell gate runs (via `get_column_applies`); if both pass, `value-from` runs. The shell gate's exit code is the signal: zero → applicable, non-zero → not applicable.
 
 The `applies-when` shell command is part of the cache key (hash) so editing it invalidates cached values.
+
+### Project variables
+
+A project entry's manifest dict can hold arbitrary user-defined keys alongside the two reserved keys:
+
+| Key | Meaning |
+|---|---|
+| `tags:` (reserved) | List of tag strings. |
+| `path:` (reserved) | Override the default project path. Defaults to `workspace.root/<name>`. Supports `~` and relative paths (resolved against `workspace.root`). Multiple project entries may share a path. |
+| any other key | A per-project variable, accessible as `{{key}}` in this project's column `value-from`, column `applies-when`, and any `run`-type command's `cmd` when invoked on this project. |
+
+The pre-defined variables `{{name}}`, `{{path}}`, `{{workspace_root}}`, and `{{archive_dir}}` are auto-injected. A project-defined variable with the same name as a pre-defined one shadows it (with a load-time warning).
+
+Variables are substituted as raw strings; no shell quoting is added. If a value needs quoting in the resulting shell command, write `"{{host}}"` in your value-from. (A `{{quote(host)}}` helper may be added in v2; out of scope for v1.)
+
+**Use case — per-deployment columns.** A single source directory can be represented by multiple project entries, each carrying its own deployment variables. Columns gated on the `deployment` tag (or whatever convention you adopt) automatically vary per entry:
+
+```yaml
+projects:
+  my-app-server-1:
+    tags: [my-app, deployment]
+    path: my-app
+    host: server-1.tld
+  my-app-server-2:
+    tags: [my-app, deployment]
+    path: my-app
+    host: server-2.tld
+
+columns:
+  is_running:
+    applies-to: my-app AND deployment
+    value-from: ssh {{host}} 'pgrep -f myapp >/dev/null'
+    type: boolean
+```
+
+Each project row gets its own SSH target without any per-row plumbing.
 
 ### Applicability as a queryable column
 
@@ -491,7 +566,7 @@ commands:
   scope: <single|aggregate>          # optional; overrides type default
 ```
 
-Variable interpolation in `cmd` uses `{{column_name}}`. Any column referenced is auto-required (added to materialization), so `cmd: "cd {{path}} && {{clean_target}}"` causes `clean_target` to be evaluated for each row. `{{workspace_root}}` and `{{archive_dir}}` are also available.
+Variable interpolation in `cmd` uses `{{name}}` for any column **or** any per-project variable (declared in the project's manifest entry). Any column referenced is auto-required (added to materialization), so `cmd: "cd {{path}} && {{clean_target}}"` causes `clean_target` to be evaluated for each row. `{{name}}`, `{{path}}`, `{{workspace_root}}`, and `{{archive_dir}}` are auto-injected.
 
 When `cmd` is a list, each entry runs as a separate shell invocation in sequence; first non-zero exit halts further steps for that project (subsequent projects still run unless `--summary` already failed).
 
@@ -572,4 +647,5 @@ proj new python-uv my-experiment
 - **Parallel runs** share the cache via per-key file lock.
 - **Tag column declaration**: when materializing the schema, the set of all tags referenced in any project's `tags:` is collected; each becomes a non-virtual INTEGER column, populated at INSERT.
 - **`--where` from CLI and command-level `where:`** combine via `AND`.
+- **`path:` resolution** at manifest load: `~` expands to home; relative paths resolve against `workspace.root`; absolute paths are used as-is. Paths outside `workspace.root` are allowed but disable cwd-based auto-scoping for those projects.
 - **Boolean values in queries**: SQLite has no real boolean — `where dirty` and `where dirty = 1` are equivalent; `not dirty` works as `dirty = 0 OR dirty IS NULL` only if you mean it that way, otherwise prefer `dirty = 0`.
