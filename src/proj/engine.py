@@ -59,7 +59,9 @@ def build_engine(
     tag_set = sorted(projects.all_tags())
     virtual_cols = [
         spec for spec in columns
-        if spec.name not in _EAGER_BUILTINS and spec.name != "unknown"
+        if spec.name not in _EAGER_BUILTINS
+        and spec.name != "unknown"
+        and spec.name not in tag_set
     ]
 
     # Build CREATE TABLE
@@ -102,7 +104,10 @@ def _eager_last_modified(path) -> int | None:
 
 def _sql_type(col_type: str) -> str:
     return {
-        "text": "TEXT", "integer": "INTEGER", "boolean": "INTEGER", "real": "REAL",
+        "text": "TEXT",
+        "integer": "INTEGER",
+        "boolean": "INTEGER",
+        "real": "REAL",
     }[col_type]
 
 
@@ -149,7 +154,9 @@ def build_query(
 ) -> str:
     if _SELECT_RE.match(input):
         if where or group_by or order_by or limit:
-            raise ValueError("full SELECT statement cannot be combined with --where/--order-by/--limit/--group-by")
+            raise ValueError(
+                "full SELECT statement cannot be combined with --where/--order-by/--limit/--group-by"
+            )
         return input
     parts = [f"SELECT {input} FROM projects"]
     if where:

@@ -38,7 +38,11 @@ class Dispatcher:
             return 0
         if spec.applies_when is None:
             return 1
-        rendered = interpolate(spec.applies_when, self._project_vars(project))
+        try:
+            rendered = interpolate(spec.applies_when, self._project_vars(project))
+        except KeyError as e:
+            log.warning("column %s on %s: %s", column_name, project_name, e)
+            return 0
         key = Cache.command_hash(rendered)
         cached = self.cache.lookup(project_name, f"{column_name}__applies", key)
         if cached is not None:
@@ -58,8 +62,19 @@ class Dispatcher:
         if self.get_applies(project_name, column_name) == 0:
             return None
 
-        rendered = interpolate(spec.value_from_template or "", self._project_vars(project))
-        key = Cache.command_hash(rendered) if spec.value_from_template else f"static:{column_name}"
+        try:
+            rendered = interpolate(spec.value_from_template or "", self._project_vars(project))
+        except KeyError as e:
+            log.warning("column %s on %s: %s", column_name, project_name, e)
+            return None
+        if spec.value_from_template:
+            key = Cache.command_hash(rendered)
+        else:
+            try:
+                dir_mtime = int(project.path.stat().st_mtime)
+            except OSError:
+                dir_mtime = 0
+            key = f"static:{column_name}:{dir_mtime}"
 
         if spec.cache:
             cached = self.cache.lookup(project_name, column_name, key)

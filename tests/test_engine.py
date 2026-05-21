@@ -25,7 +25,7 @@ def projects(workspace) -> ProjectRegistry:
     return ProjectRegistry(
         {
             "rust-proj": Project("rust-proj", workspace / "rust-proj", ["mine", "library"], {}),
-            "py-proj":   Project("py-proj",   workspace / "py-proj",   ["mine"], {}),
+            "py-proj": Project("py-proj", workspace / "py-proj", ["mine"], {}),
         },
         workspace,
     )
@@ -54,7 +54,7 @@ def test_tag_columns_populated(engine):
     rows = engine.execute("SELECT name, mine, library FROM projects ORDER BY name").fetchall()
     rows = {r[0]: (r[1], r[2]) for r in rows}
     assert rows["rust-proj"] == (1, 1)
-    assert rows["py-proj"]   == (1, 0)
+    assert rows["py-proj"] == (1, 0)
 
 
 def test_language_columns_via_virtual_dispatch(engine):
@@ -62,7 +62,7 @@ def test_language_columns_via_virtual_dispatch(engine):
         "SELECT name, lang_rust, lang_python FROM projects ORDER BY name"
     ).fetchall()
     assert {r[0]: (r[1], r[2]) for r in rows} == {
-        "py-proj":   (0, 1),
+        "py-proj": (0, 1),
         "rust-proj": (1, 0),
     }
 
@@ -102,8 +102,10 @@ def test_build_query_with_limit():
 
 
 def test_build_query_with_group_by():
-    assert build_query("lang, count(*)", group_by="lang") == \
-        "SELECT lang, count(*) FROM projects GROUP BY lang"
+    assert (
+        build_query("lang, count(*)", group_by="lang")
+        == "SELECT lang, count(*) FROM projects GROUP BY lang"
+    )
 
 
 def test_build_query_all_clauses():
@@ -128,11 +130,45 @@ def test_build_from_manifest_end_to_end(tmp_path):
     (workspace / "foo" / "Cargo.toml").write_text("")
 
     manifest_path = tmp_path / "projects.yaml"
-    manifest_path.write_text(yaml.safe_dump({
-        "workspace": {"root": str(workspace)},
-        "projects": {"foo": {"tags": ["mine"]}},
-    }))
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "workspace": {"root": str(workspace)},
+                "projects": {"foo": {"tags": ["mine"]}},
+            }
+        )
+    )
 
     engine = build_from_manifest_path(manifest_path, cache_path=tmp_path / "cache.db")
     rows = engine.execute("SELECT name, lang_rust, mine FROM projects").fetchall()
     assert rows == [("foo", 1, 1)]
+
+
+def test_tag_and_builtin_column_name_collision(tmp_path):
+    """A project tagged 'lang_rust' should not crash the engine even though
+    lang_rust is also a built-in column. The tag takes precedence."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "p").mkdir()
+    # Note: no Cargo.toml — the built-in lang_rust would be 0 here. Tag says 1.
+
+    from proj.builtins import register_cheap_builtins, register_expensive_builtins
+    from proj.cache import Cache
+    from proj.columns import ColumnRegistry
+    from proj.dispatch import Dispatcher
+    from proj.projects import Project, ProjectRegistry
+
+    projects = ProjectRegistry(
+        {"p": Project("p", ws / "p", ["lang_rust"], {})},
+        ws,
+    )
+    reg = ColumnRegistry()
+    register_cheap_builtins(reg)
+    register_expensive_builtins(reg)
+    cache = Cache(tmp_path / "cache.db")
+    dispatcher = Dispatcher(reg, projects, cache)
+    engine = build_engine(projects, reg, dispatcher)  # MUST not raise
+
+    rows = engine.execute("SELECT lang_rust FROM projects").fetchall()
+    # Tag value wins — even though the built-in would say 0, the tag column says 1
+    assert rows == [(1,)]
