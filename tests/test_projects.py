@@ -40,7 +40,9 @@ def test_vars_preserved(tmp_path):
         tmp_path,
         {
             "foo": ProjectEntry(
-                name="foo", tags=[], path_override=None,
+                name="foo",
+                tags=[],
+                path_override=None,
                 vars={"host": "server1.tld"},
             )
         },

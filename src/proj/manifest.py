@@ -61,9 +61,7 @@ def _parse_project(name: str, raw: dict[str, Any]) -> ProjectEntry:
 
 def _parse_column(name: str, raw: dict[str, Any]) -> ColumnEntry:
     if name.endswith("_applies"):
-        raise ReservedNameError(
-            f"column {name!r}: names ending in _applies are reserved"
-        )
+        raise ReservedNameError(f"column {name!r}: names ending in _applies are reserved")
     if not isinstance(raw, dict):
         raise ManifestError(f"column {name!r}: entry must be a mapping")
     if "type" not in raw:

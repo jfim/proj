@@ -33,9 +33,20 @@ def test_register_cheap_adds_expected_columns():
     expected = {
         "last_modified",
         "git",
-        "has_makefile", "has_justfile", "has_readme", "has_license",
-        "lang_rust", "lang_python", "lang_elixir", "lang_scala", "lang_r",
-        "lang_js", "lang_ts", "lang_go", "lang_java", "lang_kotlin",
+        "has_makefile",
+        "has_justfile",
+        "has_readme",
+        "has_license",
+        "lang_rust",
+        "lang_python",
+        "lang_elixir",
+        "lang_scala",
+        "lang_r",
+        "lang_js",
+        "lang_ts",
+        "lang_go",
+        "lang_java",
+        "lang_kotlin",
     }
     assert expected.issubset(set(reg.names()))
 

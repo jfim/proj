@@ -58,10 +58,9 @@ def build_engine(
 
     tag_set = sorted(projects.all_tags())
     virtual_cols = [
-        spec for spec in columns
-        if spec.name not in _EAGER_BUILTINS
-        and spec.name != "unknown"
-        and spec.name not in tag_set
+        spec
+        for spec in columns
+        if spec.name not in _EAGER_BUILTINS and spec.name != "unknown" and spec.name not in tag_set
     ]
 
     # Build CREATE TABLE

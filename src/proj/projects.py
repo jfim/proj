@@ -28,7 +28,9 @@ class ProjectRegistry:
         projects: dict[str, Project] = {}
         for name, entry in manifest.projects.items():
             path = resolve_project_path(name, entry.path_override, manifest.workspace_root)
-            projects[name] = Project(name=name, path=path, tags=list(entry.tags), vars=dict(entry.vars))
+            projects[name] = Project(
+                name=name, path=path, tags=list(entry.tags), vars=dict(entry.vars)
+            )
         return cls(projects, manifest.workspace_root)
 
     def get(self, name: str) -> Project:

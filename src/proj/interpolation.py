@@ -12,6 +12,7 @@ def interpolate(template: str, vars: dict[str, str]) -> str:
 
     Raises KeyError if a referenced variable is missing.
     """
+
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in vars:

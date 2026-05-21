@@ -208,14 +208,17 @@ def test_project_var_shadows_auto_injected(tmp_path, cache):
 def test_missing_var_in_applies_when_returns_zero(tmp_path, cache, projects):
     """A column whose applies-when references a missing var should return 0, not crash."""
     reg = ColumnRegistry()
-    reg.register(ColumnSpec(
-        name="x", type="text",
-        applies_to=None,
-        applies_when="test -n {{nonexistent_var}}",
-        cache=False,
-        value_from_template="echo ok",
-        evaluator=make_shell_evaluator(),
-    ))
+    reg.register(
+        ColumnSpec(
+            name="x",
+            type="text",
+            applies_to=None,
+            applies_when="test -n {{nonexistent_var}}",
+            cache=False,
+            value_from_template="echo ok",
+            evaluator=make_shell_evaluator(),
+        )
+    )
     d = Dispatcher(reg, projects, cache)
     assert d.get_applies("foo", "x") == 0
 
@@ -223,13 +226,16 @@ def test_missing_var_in_applies_when_returns_zero(tmp_path, cache, projects):
 def test_missing_var_in_value_from_returns_none(tmp_path, cache, projects):
     """A column whose value-from references a missing var should return None, not crash."""
     reg = ColumnRegistry()
-    reg.register(ColumnSpec(
-        name="x", type="text",
-        applies_to=None,
-        applies_when=None,
-        cache=False,
-        value_from_template="echo {{nonexistent_var}}",
-        evaluator=make_shell_evaluator(),
-    ))
+    reg.register(
+        ColumnSpec(
+            name="x",
+            type="text",
+            applies_to=None,
+            applies_when=None,
+            cache=False,
+            value_from_template="echo {{nonexistent_var}}",
+            evaluator=make_shell_evaluator(),
+        )
+    )
     d = Dispatcher(reg, projects, cache)
     assert d.get_value("foo", "x") is None

@@ -18,12 +18,12 @@ Evaluator = Callable[[str, Path], Any]
 @dataclass(frozen=True)
 class ColumnSpec:
     name: str
-    type: str                                 # text | integer | boolean | real
-    applies_to: str | None                    # SQL where-expression (cheap gate)
-    applies_when: str | None                  # shell command template (expensive gate)
-    cache: bool                               # whether to persist results across runs
-    value_from_template: str | None           # shell command template; None for non-shell built-ins
-    evaluator: Evaluator                      # how to compute the raw value
+    type: str  # text | integer | boolean | real
+    applies_to: str | None  # SQL where-expression (cheap gate)
+    applies_when: str | None  # shell command template (expensive gate)
+    cache: bool  # whether to persist results across runs
+    value_from_template: str | None  # shell command template; None for non-shell built-ins
+    evaluator: Evaluator  # how to compute the raw value
 
 
 class ColumnRegistry:
@@ -88,17 +88,22 @@ def coerce_to_type(raw: Any, ctype: str) -> Any:
 
 def make_shell_evaluator(timeout: float = 30.0) -> Evaluator:
     """Build a shell-based evaluator. The 'rendered' arg is the post-interpolation command."""
+
     def evaluator(rendered: str, cwd: Path) -> Any:
         try:
             result = subprocess.run(
                 ["sh", "-c", rendered],
-                cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except (subprocess.SubprocessError, OSError):
             return None
         if result.returncode != 0:
             return None
         return result.stdout.strip()
+
     return evaluator
 
 
@@ -106,12 +111,14 @@ def register_user_columns(reg: ColumnRegistry, entries: dict[str, ColumnEntry]) 
     """Register user-defined columns from the manifest. Overrides built-ins of the same name."""
     shell_eval = make_shell_evaluator()
     for _name, entry in entries.items():
-        reg.register(ColumnSpec(
-            name=entry.name,
-            type=entry.type,
-            applies_to=entry.applies_to,
-            applies_when=entry.applies_when,
-            cache=entry.cache,
-            value_from_template=entry.value_from,
-            evaluator=shell_eval,
-        ))
+        reg.register(
+            ColumnSpec(
+                name=entry.name,
+                type=entry.type,
+                applies_to=entry.applies_to,
+                applies_when=entry.applies_when,
+                cache=entry.cache,
+                value_from_template=entry.value_from,
+                evaluator=shell_eval,
+            )
+        )

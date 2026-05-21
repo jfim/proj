@@ -30,13 +30,17 @@ def _setup(tmp_path: Path) -> Path:
     (workspace / "bar").mkdir()
     (workspace / "bar" / "pyproject.toml").write_text("")
     manifest = tmp_path / "projects.yaml"
-    manifest.write_text(yaml.safe_dump({
-        "workspace": {"root": str(workspace)},
-        "projects": {
-            "foo": {"tags": ["mine"]},
-            "bar": {"tags": ["mine", "library"]},
-        },
-    }))
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "workspace": {"root": str(workspace)},
+                "projects": {
+                    "foo": {"tags": ["mine"]},
+                    "bar": {"tags": ["mine", "library"]},
+                },
+            }
+        )
+    )
     return manifest
 
 
@@ -45,8 +49,16 @@ def test_query_outputs_rows(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--manifest", str(manifest), "--cache-dir", str(tmp_path), "query",
-         "name, lang_rust, mine", "--format", "plain"],
+        [
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path),
+            "query",
+            "name, lang_rust, mine",
+            "--format",
+            "plain",
+        ],
     )
     assert result.exit_code == 0, result.output
     lines = result.output.strip().splitlines()
@@ -58,8 +70,18 @@ def test_query_with_where(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--manifest", str(manifest), "--cache-dir", str(tmp_path), "query",
-         "name", "--where", "library", "--format", "plain"],
+        [
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path),
+            "query",
+            "name",
+            "--where",
+            "library",
+            "--format",
+            "plain",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert result.output.strip() == "bar"
@@ -67,12 +89,25 @@ def test_query_with_where(tmp_path):
 
 def test_query_json_output(tmp_path):
     import json
+
     manifest = _setup(tmp_path)
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["--manifest", str(manifest), "--cache-dir", str(tmp_path), "query",
-         "name", "--where", "mine", "--format", "json", "--order-by", "name"],
+        [
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path),
+            "query",
+            "name",
+            "--where",
+            "mine",
+            "--format",
+            "json",
+            "--order-by",
+            "name",
+        ],
     )
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)

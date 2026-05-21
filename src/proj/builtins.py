@@ -12,23 +12,23 @@ from proj.columns import ColumnRegistry, ColumnSpec
 
 # Marker file → language column name. Multi-marker languages use a tuple.
 _LANG_MARKERS: dict[str, tuple[str, ...]] = {
-    "lang_rust":    ("Cargo.toml",),
-    "lang_python":  ("pyproject.toml", "setup.py", "requirements.txt"),
-    "lang_elixir":  ("mix.exs",),
-    "lang_scala":   ("build.sbt",),
-    "lang_r":       ("DESCRIPTION",),
-    "lang_js":      ("package.json",),
-    "lang_ts":      ("tsconfig.json",),
-    "lang_go":      ("go.mod",),
-    "lang_java":    ("pom.xml", "build.gradle"),
-    "lang_kotlin":  ("build.gradle.kts",),
+    "lang_rust": ("Cargo.toml",),
+    "lang_python": ("pyproject.toml", "setup.py", "requirements.txt"),
+    "lang_elixir": ("mix.exs",),
+    "lang_scala": ("build.sbt",),
+    "lang_r": ("DESCRIPTION",),
+    "lang_js": ("package.json",),
+    "lang_ts": ("tsconfig.json",),
+    "lang_go": ("go.mod",),
+    "lang_java": ("pom.xml", "build.gradle"),
+    "lang_kotlin": ("build.gradle.kts",),
 }
 
 _FILE_PRESENCE = {
-    "has_makefile":  "Makefile",
-    "has_justfile":  "justfile",
-    "has_readme":    "README.md",
-    "has_license":   "LICENSE",
+    "has_makefile": "Makefile",
+    "has_justfile": "justfile",
+    "has_readme": "README.md",
+    "has_license": "LICENSE",
 }
 
 
@@ -59,35 +59,63 @@ def eval_git(_template: str, cwd: Path) -> str:
 
 def register_cheap_builtins(reg: ColumnRegistry) -> None:
     """Register the cheap built-in columns (no shell-out)."""
-    reg.register(ColumnSpec(
-        name="last_modified", type="integer",
-        applies_to=None, applies_when=None, cache=False,
-        value_from_template="", evaluator=eval_last_modified,
-    ))
-    reg.register(ColumnSpec(
-        name="git", type="boolean",
-        applies_to=None, applies_when=None, cache=False,
-        value_from_template="", evaluator=eval_git,
-    ))
+    reg.register(
+        ColumnSpec(
+            name="last_modified",
+            type="integer",
+            applies_to=None,
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_last_modified,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="git",
+            type="boolean",
+            applies_to=None,
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_git,
+        )
+    )
     for col_name, marker in _FILE_PRESENCE.items():
-        reg.register(ColumnSpec(
-            name=col_name, type="boolean",
-            applies_to=None, applies_when=None, cache=False,
-            value_from_template=marker, evaluator=eval_file_exists,
-        ))
+        reg.register(
+            ColumnSpec(
+                name=col_name,
+                type="boolean",
+                applies_to=None,
+                applies_when=None,
+                cache=False,
+                value_from_template=marker,
+                evaluator=eval_file_exists,
+            )
+        )
     for col_name, markers in _LANG_MARKERS.items():
-        reg.register(ColumnSpec(
-            name=col_name, type="boolean",
-            applies_to=None, applies_when=None, cache=False,
-            value_from_template=",".join(markers), evaluator=eval_lang_check,
-        ))
+        reg.register(
+            ColumnSpec(
+                name=col_name,
+                type="boolean",
+                applies_to=None,
+                applies_when=None,
+                cache=False,
+                value_from_template=",".join(markers),
+                evaluator=eval_lang_check,
+            )
+        )
 
 
 def _run(cmd: list[str], cwd: Path, check_returncode: bool = False) -> tuple[int, str]:
     """Run a subprocess; return (returncode, stdout-stripped). Never raises."""
     try:
         result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True, timeout=30,
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (subprocess.SubprocessError, OSError):
         return 1, ""
@@ -175,31 +203,80 @@ def eval_clean_target(_template: str, cwd: Path) -> str | None:
 
 
 def register_expensive_builtins(reg: ColumnRegistry) -> None:
-    reg.register(ColumnSpec(
-        name="size", type="integer", applies_to=None, applies_when=None,
-        cache=True, value_from_template="", evaluator=eval_size,
-    ))
-    reg.register(ColumnSpec(
-        name="dirty", type="boolean", applies_to="git", applies_when=None,
-        cache=False, value_from_template="", evaluator=eval_git_dirty,
-    ))
-    reg.register(ColumnSpec(
-        name="branch", type="text", applies_to="git", applies_when=None,
-        cache=False, value_from_template="", evaluator=eval_git_branch,
-    ))
-    reg.register(ColumnSpec(
-        name="ahead", type="integer", applies_to="git", applies_when=None,
-        cache=False, value_from_template="", evaluator=eval_git_ahead,
-    ))
-    reg.register(ColumnSpec(
-        name="behind", type="integer", applies_to="git", applies_when=None,
-        cache=False, value_from_template="", evaluator=eval_git_behind,
-    ))
-    reg.register(ColumnSpec(
-        name="last_commit", type="integer", applies_to="git", applies_when=None,
-        cache=True, value_from_template="", evaluator=eval_git_last_commit,
-    ))
-    reg.register(ColumnSpec(
-        name="clean_target", type="text", applies_to=None, applies_when=None,
-        cache=True, value_from_template="", evaluator=eval_clean_target,
-    ))
+    reg.register(
+        ColumnSpec(
+            name="size",
+            type="integer",
+            applies_to=None,
+            applies_when=None,
+            cache=True,
+            value_from_template="",
+            evaluator=eval_size,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="dirty",
+            type="boolean",
+            applies_to="git",
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_git_dirty,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="branch",
+            type="text",
+            applies_to="git",
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_git_branch,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="ahead",
+            type="integer",
+            applies_to="git",
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_git_ahead,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="behind",
+            type="integer",
+            applies_to="git",
+            applies_when=None,
+            cache=False,
+            value_from_template="",
+            evaluator=eval_git_behind,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="last_commit",
+            type="integer",
+            applies_to="git",
+            applies_when=None,
+            cache=True,
+            value_from_template="",
+            evaluator=eval_git_last_commit,
+        )
+    )
+    reg.register(
+        ColumnSpec(
+            name="clean_target",
+            type="text",
+            applies_to=None,
+            applies_when=None,
+            cache=True,
+            value_from_template="",
+            evaluator=eval_clean_target,
+        )
+    )
