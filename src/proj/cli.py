@@ -1,91 +1,77 @@
+# src/proj/cli.py
 """Command-line entry point for proj."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from proj import __version__
+from proj.engine import build_from_manifest_path, build_query
+from proj.output import format_rows
+from proj.paths import cache_dir as default_cache_dir
+from proj.paths import config_path as default_config_path
 
 
 @click.group()
 @click.version_option(__version__, prog_name="proj")
-def main() -> None:
+@click.option(
+    "--manifest",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to projects.yaml (defaults to ~/.config/proj/projects.yaml).",
+)
+@click.option(
+    "--cache-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Cache directory (defaults to ~/.cache/proj).",
+)
+@click.pass_context
+def main(ctx: click.Context, manifest: Path | None, cache_dir: Path | None) -> None:
     """Manage a flat directory of heterogeneous projects."""
+    ctx.ensure_object(dict)
+    ctx.obj["manifest"] = manifest or default_config_path()
+    ctx.obj["cache_dir"] = cache_dir or default_cache_dir()
 
 
-@main.command("list")
-@click.option("--tag", "tags", help="Comma-separated tags (ANDed).")
+@main.command()
+@click.argument("input")
+@click.option("--where", help="SQL WHERE clause.")
+@click.option("--order-by", help="SQL ORDER BY clause.")
+@click.option("--group-by", help="SQL GROUP BY clause.")
+@click.option("--limit", type=int, help="SQL LIMIT.")
 @click.option(
     "--format",
     "output_format",
     type=click.Choice(["table", "json", "plain"]),
     default="table",
 )
-def list_cmd(tags: str | None, output_format: str) -> None:
-    """List projects, optionally filtered by tag."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.argument("command")
-@click.option("--tag", "tags", help="Filter projects by tag.")
-@click.option("--filter", "filter_expr", help="Filter by auto-detected property.")
-@click.option("--only-matches", is_flag=True)
-@click.option("--only-failures", is_flag=True)
-@click.option("--summary", is_flag=True)
-@click.option("--parallel", is_flag=True)
-def run(
-    command: str,
-    tags: str | None,
-    filter_expr: str | None,
-    only_matches: bool,
-    only_failures: bool,
-    summary: bool,
-    parallel: bool,
+@click.pass_context
+def query(
+    ctx: click.Context,
+    input: str,
+    where: str | None,
+    order_by: str | None,
+    group_by: str | None,
+    limit: int | None,
+    output_format: str,
 ) -> None:
-    """Run a shell command in each matching project directory."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.option("--tag", "tags", help="Filter projects by tag.")
-@click.option("--filter", "filter_expr", help="Filter by auto-detected property.")
-def status(tags: str | None, filter_expr: str | None) -> None:
-    """Pretty-printed git status across matching projects."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.option("--tag", "tags", help="Limit which projects are audited.")
-@click.option("--check", "check_name", help="Run a single named check.")
-def audit(tags: str | None, check_name: str | None) -> None:
-    """Run all defined checks and display a dashboard."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.option("--stale", help="Only projects not touched within duration (e.g. 6mo).")
-@click.option("--min-size", help="Only projects above size threshold (e.g. 50mb).")
-@click.option("--reclaimable", is_flag=True)
-def dust(stale: str | None, min_size: str | None, reclaimable: bool) -> None:
-    """Disk usage report, sorted by size descending."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.option("--tag", "tags", help="Filter projects by tag.")
-@click.option("--dry-run", is_flag=True)
-def clean(tags: str | None, dry_run: bool) -> None:
-    """Run each project's clean target to free build artifacts."""
-    raise NotImplementedError
-
-
-@main.command()
-@click.option("--dry-run", is_flag=True)
-@click.option("--restore", "restore_name", help="Decompress and restore an archived project.")
-def archive(dry_run: bool, restore_name: str | None) -> None:
-    """Move stale/unwanted projects to an archive directory."""
-    raise NotImplementedError
+    """Run a SQL query against the projects table."""
+    manifest_path: Path = ctx.obj["manifest"]
+    cdir: Path = ctx.obj["cache_dir"]
+    if not manifest_path.exists():
+        raise click.UsageError(f"Manifest not found at {manifest_path}")
+    engine = build_from_manifest_path(manifest_path, cache_path=cdir / "cache.db")
+    sql = build_query(input, where=where, order_by=order_by, group_by=group_by, limit=limit)
+    try:
+        cursor = engine.execute(sql)
+    except Exception as e:
+        raise click.ClickException(f"query failed: {e}") from e
+    headers = [d[0] for d in cursor.description] if cursor.description else []
+    rows = cursor.fetchall()
+    format_rows(rows, headers, fmt=output_format)
 
 
 if __name__ == "__main__":
